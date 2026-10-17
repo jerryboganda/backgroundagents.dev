@@ -131,6 +131,30 @@ else
   fail "compose does not render with this release; run: docker compose ... config (values not shown)"
 fi
 
+# The control plane trusts the executor's private edge through this public CA certificate, mounted
+# read-only. compose creates no missing host path (create_host_path: false), so the file must exist
+# here. A private key is refused: only ca.crt may leave the executor host. The container reads the file
+# as its own user, not as root, and root's read test passes for a root-only file, so the mode must be
+# world-readable.
+ca_file="${POLYTRONX_EXECUTOR_CA_FILE:-}"
+if is_placeholder "$ca_file"; then
+  fail "POLYTRONX_EXECUTOR_CA_FILE is unset or a placeholder; copy the public ca.crt from the executor host"
+elif [ ! -e "$ca_file" ]; then
+  fail "POLYTRONX_EXECUTOR_CA_FILE does not exist; the control plane cannot start without it"
+elif [ ! -f "$ca_file" ] || [ ! -r "$ca_file" ]; then
+  fail "POLYTRONX_EXECUTOR_CA_FILE must be a readable regular file"
+elif [[ "$(stat -L -c '%a' "$ca_file")" != *[4567] ]]; then
+  fail "POLYTRONX_EXECUTOR_CA_FILE is mode $(stat -L -c '%a' "$ca_file"); the control plane reads it as uid 1000, so use 0644"
+elif grep -q 'PRIVATE KEY' "$ca_file"; then
+  fail "POLYTRONX_EXECUTOR_CA_FILE holds private-key bytes; copy only ca.crt, never ca.key"
+elif ! command -v openssl >/dev/null 2>&1; then
+  fail "openssl is required to verify POLYTRONX_EXECUTOR_CA_FILE"
+elif ! openssl x509 -in "$ca_file" -noout >/dev/null 2>&1; then
+  fail "POLYTRONX_EXECUTOR_CA_FILE is not a PEM certificate"
+else
+  pass "executor edge CA is world-readable, holds a certificate and no private key"
+fi
+
 # ---------------------------------------------------------------------------
 # Secrets: names, shape, permissions, and the one parity rule that spans files.
 # ---------------------------------------------------------------------------

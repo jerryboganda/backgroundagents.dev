@@ -7,7 +7,7 @@
 #
 #   preflight-executor.sh --release <executor-release.env> --secrets-dir <dir>
 #
-# Run as root. The firewall check reads the DOCKER-USER chain, which Docker creates and fills.
+# Run as root. The sandbox network check reads the owned iptables chains and the oi-sandbox network.
 
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -100,13 +100,20 @@ load_release_file "$DEPLOY_DIR/pins.env"
 load_release_file "$RELEASE_FILE"
 
 missing="$(missing_release_values \
-  EXECUTOR_IMAGE EXECUTOR_IMAGE_ID EXECUTOR_BIND_ADDRESS EXECUTOR_SANDBOX_IMAGE \
+  EXECUTOR_IMAGE EXECUTOR_IMAGE_ID VPS_EXECUTOR_CONTROL_PLANE_URL EXECUTOR_SANDBOX_IMAGE \
   EXECUTOR_SANDBOX_CPUS EXECUTOR_SANDBOX_MEMORY EXECUTOR_MAX_ACTIVE_SANDBOXES \
   POLYTRONX_SECRETS_DIR)"
 if [ -z "$missing" ]; then
   pass "release file has every required value"
 else
   fail "release file has unset or placeholder values: $(echo "$missing" | tr '\n' ' ')"
+fi
+
+# The executor refuses any control-plane URL that is not an absolute https URL.
+if [[ "${VPS_EXECUTOR_CONTROL_PLANE_URL:-}" =~ ^https://[^[:space:]]+$ ]]; then
+  pass "control-plane URL is https (VPS_EXECUTOR_CONTROL_PLANE_URL)"
+else
+  fail "VPS_EXECUTOR_CONTROL_PLANE_URL must be an absolute https URL"
 fi
 
 if is_image_id "${EXECUTOR_IMAGE_ID:-}"; then
@@ -187,6 +194,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Workspace slots: the bounded storage behind each sandbox's /workspace. workspace-slots.sh --check
+# reads the six images, their mounts and their fstab lines. It changes nothing; its lines print as they are.
+# ---------------------------------------------------------------------------
+slots_ok=1
+slots_report="$(bash "$DEPLOY_DIR/workspace-slots.sh" --check 2>&1)" || slots_ok=0
+printf '%s\n' "$slots_report"
+[ "$slots_ok" = 1 ] || fail "workspace slots are not provisioned as expected (see the FAIL lines above; workspace-slots.sh --apply, as root, provisions them once)"
+
+# ---------------------------------------------------------------------------
+# Sandbox network: sandboxes must sit on oi-sandbox under the owned rules. sandbox-network.sh check
+# is read-only; apply (as root, once) creates the network and rules, and the boot unit keeps them.
+# ---------------------------------------------------------------------------
+network_ok=1
+network_report="$(bash "$DEPLOY_DIR/sandbox-network.sh" check 2>&1)" || network_ok=0
+printf '%s\n' "$network_report"
+[ "$network_ok" = 1 ] || fail "sandbox network is not applied as expected (see the FAIL lines above; sandbox-network.sh apply, as root, applies it)"
+
+# ---------------------------------------------------------------------------
 # Secrets: names, shape and permissions. The token and admission secret are never printed.
 # ---------------------------------------------------------------------------
 if [ -d "$SECRETS_DIR" ]; then
@@ -232,35 +257,12 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Port exposure. Only the dashboard host may reach the executor port.
+# Port exposure. compose.executor.yml publishes the executor on loopback only. The private HTTPS
+# edge (private-executor-edge.sh) is the one way in from the dashboard host.
 # ---------------------------------------------------------------------------
-bind="${EXECUTOR_BIND_ADDRESS:-}"
-local_addrs="$(ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)"
-if [[ "$bind" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$bind" != "0.0.0.0" ] && grep -qxF "$bind" <<<"$local_addrs"; then
-  pass "EXECUTOR_BIND_ADDRESS $bind is an address of this host"
-else
-  fail "EXECUTOR_BIND_ADDRESS must be one IPv4 address of this host; the wildcard 0.0.0.0 is refused"
-fi
-
-if [ "$bind" = "127.0.0.1" ]; then
-  pass "executor is published on loopback only; a TLS proxy on this host must reach it"
-elif [[ "${EXECUTOR_ALLOWED_SOURCE:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  source_ip="$EXECUTOR_ALLOWED_SOURCE"
-  rules="$(iptables -S DOCKER-USER 2>/dev/null || true)"
-  accept_line="$(grep -nE -- "-s ${source_ip}/32 .*--dport ${EXECUTOR_PORT} -j ACCEPT" <<<"$rules" | head -n 1 | cut -d: -f1 || true)"
-  drop_line="$(grep -nE -- "--dport ${EXECUTOR_PORT} -j DROP" <<<"$rules" | head -n 1 | cut -d: -f1 || true)"
-  if [ -n "$accept_line" ] && [ -n "$drop_line" ] && [ "$accept_line" -lt "$drop_line" ]; then
-    pass "DOCKER-USER admits port $EXECUTOR_PORT from $source_ip and drops it from every other host"
-  else
-    fail "DOCKER-USER must accept port $EXECUTOR_PORT from $source_ip before a drop rule for it; Docker publishes past ufw's INPUT rules (runbooks/executor-host.md)"
-  fi
-else
-  fail "EXECUTOR_ALLOWED_SOURCE must be the dashboard host's IPv4 address unless the executor is on loopback"
-fi
-
 live_ports="$(docker ps --filter "label=com.docker.compose.project=$EXECUTOR_PROJECT" --format '{{.Ports}}' 2>/dev/null || true)"
-if [ -n "$bind" ] && [[ "$live_ports" == *"${bind}:${EXECUTOR_PORT}->"* ]]; then
-  pass "port $EXECUTOR_PORT is held by this project (re-deploy)"
+if [[ "$live_ports" == *"127.0.0.1:${EXECUTOR_PORT}->"* ]]; then
+  pass "port $EXECUTOR_PORT is held by this project on 127.0.0.1 (re-deploy)"
 elif port_in_use "$EXECUTOR_PORT"; then
   fail "port $EXECUTOR_PORT already has a listener; find it with ss -Htlnp and resolve it by hand, do not stop it blindly"
 else

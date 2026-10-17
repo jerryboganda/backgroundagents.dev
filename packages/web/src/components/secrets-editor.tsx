@@ -11,8 +11,10 @@ import { browserApiFetch, type BrowserApiPath } from "@/lib/browser-api-fetch";
 
 import { normalizeKey, parseMaybeEnvContent, type ParsedEnvEntry } from "@/lib/env-paste";
 
-const VALID_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const MAX_KEY_LENGTH = 256;
+// Mirrors the control plane's save rule (db/secrets-validation.ts), which mirrors the runtime's. Keys are checked
+// in the saved, uppercase form.
+const VALID_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+const MAX_KEY_LENGTH = 128;
 const MAX_VALUE_SIZE = 16384;
 const MAX_TOTAL_VALUE_SIZE = 65536;
 const MAX_SECRETS_PER_SCOPE = 50;
@@ -35,6 +37,14 @@ const RESERVED_KEYS = new Set([
   "TERM",
   "PWD",
   "LANG",
+  "OI_DEFERRED_START",
+  "IMAGE_BUILD_MODE",
+  "FROM_REPO_IMAGE",
+  "REPO_IMAGE_SHA",
+  "OPENINSPECT_BOOT_MODE",
+  "OPENINSPECT_DOCKER_ENABLED",
+  "EXPECTED_TUNNEL_PORTS",
+  "PYTHONPATH",
 ]);
 
 type SecretRow = {
@@ -55,11 +65,12 @@ interface SecretsResponse {
   globalSecrets?: GlobalSecretMeta[];
 }
 
-function validateKey(value: string): string | null {
+export function validateKey(value: string): string | null {
   if (!value) return "Key is required";
   if (value.length > MAX_KEY_LENGTH) return "Key is too long";
-  if (!VALID_KEY_PATTERN.test(value)) return "Key must match [A-Za-z_][A-Za-z0-9_]*";
-  if (RESERVED_KEYS.has(value.toUpperCase())) return `Key '${value}' is reserved`;
+  if (!VALID_KEY_PATTERN.test(value))
+    return "Key must start with a letter and use only letters, digits, and underscores";
+  if (RESERVED_KEYS.has(value)) return `Key '${value}' is reserved`;
   return null;
 }
 
@@ -275,7 +286,7 @@ export function SecretsEditor({
         return;
       }
 
-      const valid = parsed.filter((entry) => !RESERVED_KEYS.has(entry.key));
+      const valid = parsed.filter((entry) => !RESERVED_KEYS.has(normalizeKey(entry.key)));
       const skipped = parsed.length - valid.length;
 
       if (valid.length === 0 && skipped > 0) {

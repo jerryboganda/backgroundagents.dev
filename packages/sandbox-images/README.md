@@ -56,6 +56,62 @@ Manual builds use unique names. Terraform supplies deterministic names; retries 
 artifacts instead of overwriting them. Temporary verification sandboxes are terminated, including on
 failure. Failed native artifacts remain for investigation and explicit cleanup.
 
+### VPS Docker image
+
+`vps` has no native build. It packs the same bundle and builds with `Dockerfile.vps` on linux/amd64:
+runtime user `sandbox` (UID/GID 1000, `/home/sandbox`), digest-pinned base, and the runtime as
+`ENTRYPOINT`. `build --provider vps` is rejected.
+
+```bash
+bundle=$(python3 packages/sandbox-images/cli.py pack --provider vps)
+docker build --platform linux/amd64 --pull=false -f packages/sandbox-images/Dockerfile.vps -t oi-vps-runtime:dev "$bundle"
+```
+
+The base digest and runtime IDs live in `targets.json` and `Dockerfile.vps`; tests keep them equal.
+Root filesystem, volumes and capabilities are set by the executor, not the image.
+
+#### VPS runtime contract
+
+- Identity: `install/filesystem.sh` creates `sandbox` as UID:GID 1000:1000. It fails if either ID or
+  the group name is taken, or if an existing account has other IDs. The image runs as
+  `USER 1000:1000`.
+- Entrypoint: `/usr/local/bin/openinspect-entrypoint` (`vps/entrypoint.sh`). It requires a writable
+  `$HOME` and `/app/home-seed`, then (1) copies the seed into `$HOME` with `tar --skip-old-files`:
+  missing paths are added, existing paths are never overwritten, and a rerun changes nothing. A seed
+  entry that conflicts with a user entry stops the entrypoint before any write: a seed directory
+  over a user file, a seed file or symlink over a user directory, or a seed directory where `$HOME`
+  has a symlink. (2) recreates `/tmp/opencode` for UID 1000; (3) `exec`s its arguments. `CMD` is
+  `python -m sandbox_runtime.entrypoint`, so an argument-less launch runs the runtime. Any arguments
+  replace that command.
+- Seed: `/app/home-seed` is a root-owned copy of the build-time `/home/sandbox`, taken before the
+  install smoke. It holds build output: OpenCode config (`.config/opencode`), browser config
+  (`.agent-browser/config.json`), npm paths (`.npm-cache`, `.npm-global`), `.local/bin`, the
+  `/etc/skel` dotfiles and the empty `.cache/openinspect/scm`. Before the copy, the build deletes
+  OpenCode session state under `.local/share/opencode`: `opencode.db*`, `auth.json`, `log`,
+  `storage` and `snapshot`. The contract refuses session and auth state: `auth.json`,
+  `opencode.db*`, `.local/share/opencode/{storage,snapshot}`, `.codex`, `.claude`, `.config/gh`,
+  `.ssh`, `.netrc`, `.npmrc`, `.git-credentials`, and any file under `.cache/openinspect`. Under
+  `.cache` it admits only OpenCode's model catalog (`.cache/opencode`) and the SCM cache directory.
+  Other OpenCode output is not validated until the first Linux build runs the contract on the real
+  seed. Docker does not copy image contents into a bind mount, so the entrypoint performs the
+  seeding.
+- Packing: NUL-free `.sh` and `#!` files pack as LF with mode 0755. Other files keep their bytes and
+  pack as 0644. Lone CR and binary bytes are never rewritten. The mode comes from this rule, not the
+  checkout, because NTFS reports 0666 for every file. Standard pack sets each mode and checks it, so
+  a filesystem that keeps no POSIX modes (Windows) fails closed; run pack on Linux or macOS.
+  Changing this rule changes every provider's build hash once, so each image rebuilds on its next
+  build.
+- Executor: bind `HOME` and `/workspace` from directories owned by 1000:1000. The root may be
+  read-only, and `/tmp` may be an exec tmpfs with a `size=` bound. A tmpfs on `/tmp` hides
+  `/tmp/.X11-unix`, so desktop services also need `--tmpfs /tmp/.X11-unix:mode=1777`.
+- Harness homes, created at runtime under `HOME` and required to be writable: OpenCode
+  `.config/opencode` (seeded), Claude `.openinspect/claude` (or `CLAUDE_CONFIG_DIR`), Codex
+  `.openinspect/codex`.
+- Gate: the `vps` entry of the `contract` job in `.github/workflows/sandbox-images.yml` builds the
+  image, asserts the user IDs, runs `smoke_test.py verify` through `--entrypoint`, then runs
+  `smoke_test.py contract` twice on a read-only root with an exec tmpfs `/tmp` and empty bind
+  mounts. A preexisting user file must survive.
+
 ## Deployment and refresh
 
 Terraform uses the shared build-input hash for change detection and the existing provider bindings
@@ -84,11 +140,11 @@ One conservative source hash covers installation and build/deployment tooling. C
 provider or Vercel control-plane/shared source roots may trigger extra builds; there is no separate
 installed-image hash or exact-content attestation.
 
-`pack` creates a fresh staging directory from explicitly allowed payload roots. It preserves file
-modes and contained symlinks, rejects missing inputs, and never reuses another caller's directory.
-No detailed file manifest or shared staging-cache reconciliation remains. Build from a stable
-checkout. Staging directories under `.cache/sandbox-images` may be removed when no build is using
-them.
+`pack` creates a fresh staging directory from explicitly allowed payload roots. It sets and checks
+the packed modes, keeps contained symlinks, rejects missing inputs, and never reuses another
+caller's directory. No detailed file manifest or shared staging-cache reconciliation remains. Build
+from a stable checkout. Staging directories under `.cache/sandbox-images` may be removed when no
+build is using them.
 
 ```bash
 uv run --frozen --project packages/sandbox-images --extra dev pytest packages/sandbox-images/tests

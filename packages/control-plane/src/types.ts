@@ -62,7 +62,7 @@ export interface EnvConfig {
   ALLOWED_GITHUB_ORGS?: string;
   UNSAFE_ALLOW_ALL_USERS?: string;
   CF_ACCOUNT_ID?: string; // Cloudflare account ID
-  SANDBOX_PROVIDER?: string; // "modal" (default), "daytona", "vercel", "opencomputer", or "e2b"
+  SANDBOX_PROVIDER?: string; // "modal" (default), "daytona", "vercel", "opencomputer", "e2b", or "vps"
   MODAL_WORKSPACE?: string; // Modal workspace name
   MODAL_ENVIRONMENT?: string; // Modal environment name for dashboard URLs
   MODAL_ENVIRONMENT_WEB_SUFFIX?: string; // Modal environment web suffix for endpoint URLs
@@ -92,6 +92,9 @@ export interface EnvConfig {
   E2B_TEMPLATE_ID?: string; // Pre-built E2B template ID
   E2B_SANDBOX_TIMEOUT_SECONDS?: string; // Sandbox TTL in seconds; Hobby plans must set 3300
   E2B_AUTO_PAUSE?: string; // "true" (default) pauses on TTL expiry (resumable, auto-resumes) instead of killing
+  VPS_EXECUTOR_URL?: string; // VPS executor base URL (https); required when SANDBOX_PROVIDER=vps
+  VPS_EXECUTOR_TOKEN?: string; // VPS executor bearer token; required when SANDBOX_PROVIDER=vps
+  VPS_EXECUTOR_ADMISSION_SECRET?: string; // Shared with the VPS executor; signs admission leases. Required for VPS creates
 
   // Sandbox lifecycle configuration
   SANDBOX_INACTIVITY_TIMEOUT_MS?: string; // Inactivity timeout in ms (default: 600000 = 10 min)

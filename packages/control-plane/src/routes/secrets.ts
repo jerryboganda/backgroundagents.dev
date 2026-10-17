@@ -9,7 +9,11 @@ import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import { repositoryParams } from "./repository-params";
 import { RepoSecretsStore } from "../db/repo-secrets";
 import { GlobalSecretsStore } from "../db/global-secrets";
-import { SecretsValidationError, normalizeKey, validateKey } from "../db/secrets-validation";
+import {
+  SecretsValidationError,
+  normalizeKey,
+  validateKeyForDelete,
+} from "../db/secrets-validation";
 import type { Env } from "../types";
 import { createLogger } from "../logger";
 import { authorizeWorkspaceRepositories } from "./workspace-repository-authorization";
@@ -210,7 +214,7 @@ async function handleDeleteRepoSecret(
 
   try {
     const normalizedKey = normalizeKey(key);
-    validateKey(normalizedKey);
+    validateKeyForDelete(normalizedKey);
 
     const deleted = await store.deleteSecret(resolved.repoId, key);
     if (!deleted) {
@@ -358,7 +362,7 @@ async function handleDeleteGlobalSecret(
 
   try {
     const normalizedKey = normalizeKey(key);
-    validateKey(normalizedKey);
+    validateKeyForDelete(normalizedKey);
 
     const deleted = await store.deleteSecret(key);
     if (!deleted) {

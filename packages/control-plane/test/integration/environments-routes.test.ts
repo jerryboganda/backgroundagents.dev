@@ -250,6 +250,23 @@ describe("Environments API (routes)", () => {
       ).toEqual(["ENV_TWO"]);
     });
 
+    it.each(["_LEGACY", "PYTHONPATH"])(
+      "deletes %s, stored under the pre-strict save rule",
+      async (key) => {
+        const id = await seedEnvironment();
+        await env.DB.prepare(
+          "INSERT INTO environment_secrets (environment_id, key, encrypted_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+        )
+          .bind(id, key, "ciphertext", 1, 1)
+          .run();
+
+        const res = await serviceFetch(`${BASE}/environments/${id}/secrets/${key.toLowerCase()}`, {
+          method: "DELETE",
+        });
+        expect(res.status).toBe(200);
+      }
+    );
+
     it("returns 404 when the environment does not exist", async () => {
       const res = await serviceFetch(`${BASE}/environments/env_missing/secrets`, {
         method: "PUT",

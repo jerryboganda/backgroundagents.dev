@@ -1,11 +1,13 @@
 // Guards for the provider cap gate, the Docker data-root disk check, the periodic-backup age,
-// and the overlay allowlist in the release workflow. Shell helpers run through lib.sh with
+// and the overlay allowlist and credential refusal in the release workflow, and the executor CA mount and its preflight check. Shell helpers run through lib.sh with
 // stubbed curl and docker; nothing contacts Modal or any other provider.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
-import { BASH, DEPLOY_DIR, REPO_ROOT, makeSandbox, runSnippet, stubCalls } from "./test-harness.mjs";
+import { BASH, DEPLOY_DIR, REPO_ROOT, makeSandbox, runScript, runSnippet, stubCalls, writeRelease } from "./test-harness.mjs";
 
 const HEALTHY = '{"success":true,"data":{"status":"healthy","max_active_sandboxes":2,"capacity_enforcement":"pre-create"}}';
 
@@ -158,15 +160,106 @@ describe("periodic backup age", () => {
 describe("overlay allowlist in the release workflow", () => {
   const workflow = readFileSync(`${REPO_ROOT}/.github/workflows/polytronx-openinspect.yml`, "utf8");
   const allowed = /allowed='([^']+)'/.exec(workflow)[1];
+  // Stands in for git in the step: `git diff` prints the paths under test, and the other calls succeed.
+  const gitDiffStub = `#!/usr/bin/env bash
+if [ "$1" = diff ] && [ -n "$CHANGED_PATHS" ]; then printf '%s\\n' "$CHANGED_PATHS"; fi
+exit 0
+`;
 
-  /** The paths grep -Ev keeps: the ones the workflow would refuse as upstream changes. */
+  /** The shell script of one workflow step, with the YAML block indentation removed. */
+  function workflowStep(name) {
+    const lines = workflow.split(/\r?\n/);
+    const start = lines.indexOf(`      - name: ${name}`);
+    assert.notEqual(start, -1, `no step named ${name}`);
+    const run = lines.indexOf("        run: |", start);
+    assert.notEqual(run, -1, `step ${name} has no run block`);
+    const body = [];
+    for (const line of lines.slice(run + 1)) {
+      if (line !== "" && !line.startsWith(" ".repeat(10))) break;
+      body.push(line.slice(10));
+    }
+    return body.join("\n");
+  }
+
+  /** Runs the workflow's own pin-and-overlay step with `paths` as the committed diff. */
+  function runAdmission(paths) {
+    const sb = makeSandbox();
+    mkdirSync(`${sb.root}/deploy/polytronx`, { recursive: true });
+    writeFileSync(`${sb.root}/deploy/polytronx/pins.env`, `UPSTREAM_REVISION=${"a".repeat(40)}\n`);
+    writeFileSync(`${sb.bin}/git`, gitDiffStub);
+    chmodSync(`${sb.bin}/git`, 0o755);
+    return runSnippet(sb, workflowStep("Check the upstream pin and the overlay"), { CHANGED_PATHS: paths.join("\n") });
+  }
+
+  /** The paths the workflow's step refuses, credential or allowlist, in the order given. */
   function refused(paths) {
+    const printed = runAdmission(paths).stdout.split("\n");
+    return paths.filter((path) => printed.includes(path));
+  }
+
+  /** The paths the allowlist alone would refuse, with no credential check: a control for the tests below. */
+  function refusedByAllowlist(paths) {
     const result = spawnSync(BASH, ["-c", String.raw`printf '%s\n' "$PATHS" | grep -Ev "$ALLOWED" || true`], {
       encoding: "utf8",
       env: { ...process.env, PATHS: paths.join("\n"), ALLOWED: allowed },
     });
     return result.stdout.split("\n").filter(Boolean);
   }
+
+  it("admits exactly the 0090 migration, the secrets editor, and the secrets-validation and sandbox-env files, each by its full path", () => {
+    // Exact paths, no directory prefix: a file beside them is refused until it is listed too.
+    const admitted = [
+      "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql",
+      "packages/web/src/components/secrets-editor.tsx",
+      "packages/web/src/components/secrets-editor.test.ts",
+      "packages/control-plane/src/db/secrets-validation.ts",
+      "packages/control-plane/src/db/secrets-validation.test.ts",
+      "packages/control-plane/src/sandbox/sandbox-env.ts",
+    ];
+    const result = runAdmission(admitted);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /intact/);
+  });
+
+  it("refuses the neighbours of the 0090 migration, the secrets editor, and the secrets-validation and sandbox-env files", () => {
+    const neighbours = [
+      "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql.bak",
+      "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql.orig",
+      "terraform/d1/migrations/0091_sandbox_admission_relinquished.sql",
+      "terraform/d1/migrations/0091_next.sql",
+      "x/terraform/d1/migrations/0090_sandbox_admission_relinquished.sql",
+      "packages/web/src/components/secrets-editor.tsx.orig",
+      "packages/web/src/components/secrets-editor.test.tsx",
+      "packages/web/src/components/secrets-editor.test.ts.bak",
+      "packages/web/src/components/secrets-editor.ts",
+      "packages/web/src/components/SecretsEditor.tsx",
+      "packages/web/src/components/button.tsx",
+      "packages/web/src/components/index.ts",
+      "packages/web/src/secrets-editor.tsx",
+      "packages/control-plane/src/db/secrets-validation.ts.bak",
+      "packages/control-plane/src/db/secrets-validation.test.tsx",
+      "packages/control-plane/src/db/secrets-validation.orig.ts",
+      "packages/control-plane/src/sandbox/sandbox-env.ts.orig",
+      "packages/control-plane/src/sandbox/sandbox-env.test.ts",
+      "x/packages/control-plane/src/sandbox/sandbox-env.ts",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("refuses credential paths beside the 0090 migration and the web secrets editor files", () => {
+    const credentials = [
+      "terraform/d1/migrations/.env",
+      "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql.tfstate",
+      "packages/web/src/components/.env.local",
+      "packages/web/src/components/secrets/editor.tsx",
+      "packages/web/src/components/secrets-editor.tsx.pem",
+      "packages/web/src/components/secrets-editor.test.ts.key",
+    ];
+    const result = runAdmission(credentials);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stdout, /credential paths differ from the upstream pin/);
+    assert.deepEqual(refused(credentials), credentials);
+  });
 
   it("accepts every path that differs from the upstream pin in this checkout", () => {
     // The workflow's own diff, read from git rather than copied here, so a path the overlay adds
@@ -180,6 +273,187 @@ describe("overlay allowlist in the release workflow", () => {
     ];
     assert.ok(changed.length > 0, "the checkout should differ from the pin by the overlay");
     assert.deepEqual(refused(changed), []);
+  });
+
+  it("admits exactly the control-plane secrets routes and their tests, each by its full path", () => {
+    // Exact paths, no directory prefix: a file beside them is refused until it is listed too.
+    const admitted = [
+      "packages/control-plane/src/db/team-secrets.ts",
+      "packages/control-plane/src/routes/environment-secrets.ts",
+      "packages/control-plane/src/routes/secrets.ts",
+      "packages/control-plane/src/routes/secrets.repository-grants.test.ts",
+      "packages/control-plane/test/integration/environments-routes.test.ts",
+      "packages/control-plane/test/integration/global-secrets.test.ts",
+      "packages/control-plane/test/integration/team-secrets-routes.test.ts",
+    ];
+    const result = runAdmission(admitted);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /intact/);
+  });
+
+  it("refuses the neighbours of the control-plane secrets routes and their tests", () => {
+    const neighbours = [
+      "packages/control-plane/src/routes/secrets.ts.orig",
+      "packages/control-plane/src/routes/secrets.test.ts",
+      "packages/control-plane/src/routes/secrets.repository-grants.ts",
+      "packages/control-plane/src/routes/secrets.repository-grants.test.tsx",
+      "packages/control-plane/src/routes/environment-secrets.test.ts",
+      "packages/control-plane/src/routes/Secrets.ts",
+      "packages/control-plane/src/db/team-secrets.test.ts",
+      "packages/control-plane/src/db/team-secrets.ts.bak",
+      "packages/control-plane/test/integration/global-secrets.test.ts.orig",
+      "packages/control-plane/test/integration/global-secrets.ts",
+      "packages/control-plane/test/integration/team-secrets-routes.test.tsx",
+      "packages/control-plane/test/integration/environments-routes.test.ts.bak",
+      "x/packages/control-plane/src/routes/secrets.ts",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("refuses credential paths beside the control-plane secrets routes", () => {
+    const credentials = [
+      "packages/control-plane/src/routes/secrets/index.ts",
+      "packages/control-plane/src/routes/secrets.ts.pem",
+      "packages/control-plane/src/db/team-secrets.ts.tfstate",
+      "packages/control-plane/test/integration/global-secrets.test.ts.key",
+      "packages/control-plane/test/integration/.env.test",
+    ];
+    const result = runAdmission(credentials);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stdout, /credential paths differ from the upstream pin/);
+    assert.deepEqual(refused(credentials), credentials);
+  });
+
+  it("admits exactly the environment secrets store and its test, each by its full path", () => {
+    // Exact paths, no directory prefix: a file beside them is refused until it is listed too.
+    const admitted = [
+      "packages/control-plane/src/db/environment-secrets.ts",
+      "packages/control-plane/src/db/environment-secrets.test.ts",
+    ];
+    const result = runAdmission(admitted);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /intact/);
+  });
+
+  it("refuses the neighbours of the environment secrets store and its test", () => {
+    const neighbours = [
+      "packages/control-plane/src/db/environment-secrets.ts.orig",
+      "packages/control-plane/src/db/environment-secrets.test.ts.bak",
+      "packages/control-plane/src/db/environment-secrets.test.tsx",
+      "packages/control-plane/src/db/environment-secrets.tsx",
+      "packages/control-plane/src/db/environment-secrets.spec.ts",
+      "packages/control-plane/src/db/environment-secrets-helpers.ts",
+      "packages/control-plane/src/db/environment-secrets/index.ts",
+      "packages/control-plane/src/db/Environment-Secrets.ts",
+      "packages/control-plane/src/db/repo-environment-secrets.ts",
+      "x/packages/control-plane/src/db/environment-secrets.ts",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("refuses credential paths beside the environment secrets store and its test", () => {
+    const credentials = [
+      "packages/control-plane/src/db/.env.local",
+      "packages/control-plane/src/db/environment-secrets.ts.pem",
+      "packages/control-plane/src/db/environment-secrets.test.ts.key",
+      "packages/control-plane/src/db/environment-secrets.ts.tfstate",
+      "packages/control-plane/src/db/secrets/environment-secrets.ts",
+    ];
+    const result = runAdmission(credentials);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stdout, /credential paths differ from the upstream pin/);
+    assert.deepEqual(refused(credentials), credentials);
+  });
+
+  it("admits exactly the executor files outside its package", () => {
+    // Each path is named, so a file added beside them is refused until it is listed too.
+    assert.deepEqual(refused([
+      "packages/control-plane/src/node/config.ts",
+      "packages/control-plane/src/types.ts",
+      "packages/control-plane/src/sandbox/provider.ts",
+      "packages/control-plane/src/sandbox/provider-factory.ts",
+      "packages/control-plane/src/sandbox/provider-factory.test.ts",
+      "packages/control-plane/src/sandbox/lifecycle/manager.ts",
+      "packages/control-plane/src/sandbox/lifecycle/vm-startup-reconciliation.ts",
+      "packages/control-plane/src/sandbox/admission/gate.ts",
+      "packages/control-plane/src/sandbox/admission/gate.test.ts",
+      "packages/control-plane/src/sandbox/admission/manager-admission.test.ts",
+      "packages/control-plane/src/sandbox/admission/reservations.ts",
+      "packages/control-plane/src/sandbox/admission/reservations.test.ts",
+      "packages/control-plane/src/sandbox/providers/vps-provider.ts",
+      "packages/control-plane/src/sandbox/providers/vps-provider.test.ts",
+      "packages/control-plane/test/integration/cleanup.ts",
+      "packages/shared/src/types/integrations.ts",
+      "terraform/d1/migrations/0089_sandbox_admission_reservations.sql",
+      "package-lock.json",
+    ]), []);
+  });
+
+  it("refuses the neighbours of the executor files outside its package", () => {
+    const neighbours = [
+      "packages/control-plane/src/sandbox/admission/index.ts",
+      "packages/control-plane/src/sandbox/admission/manager-admission.ts",
+      "packages/control-plane/src/sandbox/admission/gate.ts.orig",
+      "packages/control-plane/src/sandbox/admission/reservations.test.ts.bak",
+      "packages/control-plane/src/sandbox/providers/modal-provider.ts",
+      "packages/control-plane/src/sandbox/providers/vps-provider.ts.orig",
+      "packages/control-plane/src/sandbox/lifecycle/manager.test.ts",
+      "packages/control-plane/src/sandbox/provider.test.ts",
+      "packages/control-plane/src/sandbox/types.ts",
+      "packages/control-plane/src/node/server.ts",
+      "packages/control-plane/src/types.ts.orig",
+      "packages/control-plane/test/integration/cleanup.test.ts",
+      "packages/shared/src/types/index.ts",
+      "packages/web/package-lock.json",
+      "terraform/d1/migrations/0089_sandbox_admission_reservations.sql.bak",
+      "terraform/d1/migrations/0090_next.sql",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("admits exactly the other control-plane files the overlay changes, each by its full path", () => {
+    // Named by full path, with no packages/control-plane prefix: a file beside them is refused until it is listed.
+    assert.deepEqual(refused([
+      "packages/control-plane/src/sandbox/admission/vps-reconcile.ts",
+      "packages/control-plane/src/sandbox/admission/vps-reconcile.test.ts",
+      "packages/control-plane/src/sandbox/providers/pending-vm-reference.ts",
+      "packages/control-plane/src/scheduled-jobs.ts",
+      "packages/control-plane/src/scheduled-jobs.test.ts",
+      "packages/control-plane/src/session/components.ts",
+      "packages/control-plane/src/session/components-admission.test.ts",
+    ]), []);
+  });
+
+  it("refuses the neighbours of those control-plane files", () => {
+    const neighbours = [
+      "packages/control-plane/src/sandbox/admission/vps-reconcile.ts.orig",
+      "packages/control-plane/src/sandbox/admission/vps-reconcile-helpers.ts",
+      "packages/control-plane/src/sandbox/admission/vps-reconcile.test.ts.bak",
+      "packages/control-plane/src/sandbox/providers/pending-vm-reference.test.ts",
+      "packages/control-plane/src/sandbox/providers/pending-vm-reference.ts.bak",
+      "packages/control-plane/src/scheduled-jobs-admission.ts",
+      "packages/control-plane/src/scheduled-jobs.ts.orig",
+      "packages/control-plane/src/scheduled-jobs.test.ts.bak",
+      "packages/control-plane/src/session/components.test.ts",
+      "packages/control-plane/src/session/components-admission.ts",
+      "packages/control-plane/src/session/components.ts.orig",
+      "packages/control-plane/src/session/index.ts",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("admits the shutdown files by full path, and refuses their neighbours", () => {
+    assert.deepEqual(refused([
+      "packages/control-plane/src/session/sandbox-shutdown.ts",
+      "packages/control-plane/src/session/sandbox-shutdown.test.ts",
+    ]), []);
+    const neighbours = [
+      "packages/control-plane/src/session/sandbox-shutdown.ts.orig",
+      "packages/control-plane/src/session/sandbox-shutdown-helpers.ts",
+      "packages/control-plane/src/session/sandbox-shutdown.test.ts.bak",
+      "packages/control-plane/src/session/index.ts",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
   });
 
   it("refuses a nested .gitignore, and upstream or neighbouring paths", () => {
@@ -211,6 +485,154 @@ describe("overlay allowlist in the release workflow", () => {
       "xdeploy/polytronx/backup.sh",
       "deploy/polytronx-backup/backup.sh",
     ]);
+  });
+
+  it("admits the root .env.example template and .gitattributes by exact name only", () => {
+    assert.deepEqual(refused([".env.example", ".gitattributes"]), []);
+    // Real env files and near misses of the two admitted names stay refused.
+    const neighbours = [
+      ".env",
+      ".env.local",
+      ".env.production",
+      "packages/web/.env.example",
+      ".env.example.bak",
+      "x.env.example",
+      "packages/web/.gitattributes",
+      ".gitattributes.bak",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("refuses credential paths under the overlay's own directories, which the allowlist alone admits", () => {
+    const credentials = [
+      "deploy/polytronx/.env",
+      "deploy/polytronx/.env.production",
+      "deploy/polytronx/.env.example",
+      "deploy/polytronx/.dev.vars",
+      "deploy/polytronx/control-plane.env",
+      "deploy/polytronx/secrets/control-plane.env",
+      "deploy/polytronx/tls/edge.key",
+      "deploy/polytronx/edge.pem",
+      "deploy/polytronx/id_ed25519",
+      "deploy/polytronx/auth.json",
+      "deploy/polytronx/.npmrc",
+      "deploy/polytronx/ci-token.txt",
+      "deploy/polytronx/terraform.tfvars",
+      "deploy/polytronx/state/terraform.tfstate.backup",
+      "deploy/polytronx/.ssh/config",
+      "packages/vps-executor/.env",
+      "packages/vps-executor/.env.local",
+      "packages/vps-executor/secrets/executor.env",
+    ];
+    assert.deepEqual(refusedByAllowlist(credentials), [], "the allowlist alone would admit these");
+    const result = runAdmission(credentials);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stdout, /credential paths differ from the upstream pin/);
+    assert.deepEqual(refused(credentials), credentials);
+  });
+
+  it("refuses credential paths at the root, and root near misses of the template", () => {
+    const root = [".env", ".env.local", ".env.production", ".env.examples", ".env.example.bak", ".dev.vars", "pins.env"];
+    assert.deepEqual(refused(root), root);
+  });
+
+  it("admits the overlay's pins, nonsecret task templates, and names that only look like credentials", () => {
+    const legitimate = [
+      ".env.example",
+      "deploy/polytronx/pins.env",
+      "deploy/polytronx/templates/control-plane.env.template",
+      "deploy/polytronx/templates/release.env.template",
+      "deploy/polytronx/templates/storage.env.template",
+      "deploy/polytronx/templates/web.env.template",
+      "deploy/polytronx/environment-notes.md",
+      "deploy/polytronx/keyed-rollout.md",
+      "deploy/polytronx/oauth.json",
+      "deploy/polytronx/secrets-policy.md",
+      "deploy/polytronx/tokens-policy.md",
+      "packages/vps-executor/src/secrets.ts",
+      "packages/vps-executor/src/state.ts",
+      "packages/vps-executor/test/state.test.ts",
+    ];
+    const result = runAdmission(legitimate);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /intact/);
+  });
+
+  it("admits exactly the sandbox image and runtime files named by path, and the sandbox workflow", () => {
+    assert.deepEqual(refused([
+      ".github/workflows/sandbox-images.yml",
+      "packages/sandbox-images/Dockerfile.vps",
+      "packages/sandbox-images/README.md",
+      "packages/sandbox-images/targets.json",
+      "packages/sandbox-images/install/filesystem.sh",
+      "packages/sandbox-images/vps/entrypoint.sh",
+      "packages/sandbox-images/src/sandbox_images/bundle.py",
+      "packages/sandbox-images/src/sandbox_images/native.py",
+      "packages/sandbox-images/tests/test_bundle.py",
+      "packages/sandbox-images/tests/test_verification.py",
+      "packages/sandbox-images/tests/test_vps_seed.py",
+      "packages/sandbox-images/verify/smoke_test.py",
+      "packages/sandbox-runtime/src/sandbox_runtime/entrypoint.py",
+      "packages/sandbox-runtime/src/sandbox_runtime/session_context_start.py",
+      "packages/sandbox-runtime/tests/test_session_context_start.py",
+    ]), []);
+  });
+
+  it("refuses the neighbours of the sandbox image and runtime files, and the root notes", () => {
+    // The root notes live in ignored bookkeeping. A copy at the root is refused, not admitted.
+    const neighbours = [
+      "packages/sandbox-images/Dockerfile",
+      "packages/sandbox-images/Dockerfile.vps.orig",
+      "packages/sandbox-images/vps/entrypoint.sh.bak",
+      "packages/sandbox-images/vps/entrypoint.py",
+      "packages/sandbox-images/install/common.sh",
+      "packages/sandbox-images/tests/test_vps_seed.py.bak",
+      "packages/sandbox-images/tests/test_vps.py",
+      "packages/sandbox-images/src/sandbox_images/bundle.py.orig",
+      "packages/sandbox-images/src/sandbox_images/vps.py",
+      "packages/sandbox-images/verify/smoke_test.py.bak",
+      "packages/sandbox-runtime/src/sandbox_runtime/session_context.py",
+      "packages/sandbox-runtime/src/sandbox_runtime/session_context_start.py.orig",
+      "packages/sandbox-runtime/src/sandbox_runtime/bin/oi-git-sign",
+      "packages/sandbox-runtime/src/sandbox_runtime/gh-wrapper.sh",
+      "packages/sandbox-runtime/tests/test_session_context_start.py.bak",
+      ".github/workflows/sandbox-images.yml.bak",
+      ".github/workflows/sandbox-images.yaml",
+      "x/.github/workflows/sandbox-images.yml",
+      "VPS-IMAGE-LINUX-BUILD.md",
+      "DEPLOY-SHELL-DIAG.md",
+      "DEPLOY-SCOPE-FINAL.md",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+});
+
+describe("operational files stay LF in every checkout", () => {
+  it("pins.env has no carriage return, and .gitattributes pins the deploy files and the workflow to LF", () => {
+    // A CRLF pins.env fails the gates and lib.sh's load_release_file, so this names the cause directly.
+    assert.doesNotMatch(readFileSync(`${DEPLOY_DIR}/pins.env`, "utf8"), /\r/);
+    const attributes = execFileSync("git", [
+      "check-attr", "eol", "--",
+      "deploy/polytronx/pins.env",
+      "deploy/polytronx/lib.sh",
+      ".github/workflows/polytronx-openinspect.yml",
+    ], { cwd: REPO_ROOT, encoding: "utf8" });
+    assert.equal(attributes, [
+      "deploy/polytronx/pins.env: eol: lf",
+      "deploy/polytronx/lib.sh: eol: lf",
+      ".github/workflows/polytronx-openinspect.yml: eol: lf",
+      "",
+    ].join("\n"));
+  });
+
+  it("pins every image shell script and the extensionless oi-git-sign to LF, each by exact path", () => {
+    // Every tracked .sh under packages/sandbox-images is in the list, so a new script is refused until it is.
+    const shell = execFileSync("git", ["ls-files", "--", "packages/sandbox-images"], { cwd: REPO_ROOT, encoding: "utf8" })
+      .split("\n")
+      .filter((path) => path.endsWith(".sh"));
+    const paths = [...shell, "packages/sandbox-runtime/src/sandbox_runtime/bin/oi-git-sign"];
+    const attributes = execFileSync("git", ["check-attr", "eol", "--", ...paths], { cwd: REPO_ROOT, encoding: "utf8" });
+    assert.equal(attributes, paths.map((path) => `${path}: eol: lf`).join("\n") + "\n");
   });
 });
 
@@ -276,5 +698,162 @@ describe("pinned third-party images", () => {
     const unpinned = pins.replace(/^LITESTREAM_IMAGE=.*$/m, "LITESTREAM_IMAGE=litestream/litestream:0.3.13");
     writeFileSync(`${sb.deploy}/pins.env`, unpinned);
     assert.equal(thirdPartyProblem(sb), "LITESTREAM_IMAGE in pins.env is not pinned by digest");
+  });
+});
+
+describe("executor edge CA: the control plane mount and preflight", () => {
+  const compose = readFileSync(`${DEPLOY_DIR}/compose.production.yml`, "utf8");
+  const app = compose.slice(compose.indexOf("\n  app:"), compose.indexOf("\n  object-store:"));
+  const FIXTURE = readFileSync(`${DEPLOY_DIR}/testdata/executor-edge-ca.crt`, "utf8");
+  const HAS_OPENSSL = spawnSync(BASH, ["-c", "command -v openssl"], { encoding: "utf8" }).status === 0;
+  // Joined at run time, so no private-key header is written out in this source.
+  const KEY_BEGIN = ["-----BEGIN", "PRIVATE", "KEY-----"].join(" ");
+  const KEY_END = ["-----END", "PRIVATE", "KEY-----"].join(" ");
+
+  /** The CA line the real preflight.sh prints for POLYTRONX_EXECUTOR_CA_FILE; undefined leaves it unset. */
+  function caCheck(sb, value, env = {}) {
+    const overrides = value === undefined ? {} : { POLYTRONX_EXECUTOR_CA_FILE: value };
+    const release = writeRelease(sb, "release.env", overrides);
+    const result = runScript(sb, "preflight.sh", ["--release", release, "--secrets-dir", sb.secrets, "--source", sb.root], env);
+    return result.stdout.split("\n").find((line) => /^(PASS|FAIL)\s+(executor edge CA|POLYTRONX_EXECUTOR_CA_FILE)/.test(line)) ?? "";
+  }
+
+  /** A file at `mode` holding `text`. The Windows stat shim answers the same mode, since NTFS keeps no POSIX modes. */
+  function caFile(sb, mode, text = FIXTURE, name = "executor-edge-ca.crt") {
+    const path = `${sb.root}/${name}`;
+    writeFileSync(path, text);
+    chmodSync(path, parseInt(mode, 8));
+    return { path, env: { STUB_STAT_MODE: mode } };
+  }
+
+  it("mounts the public CA read-only, in long syntax, and names the same path for NODE_EXTRA_CA_CERTS", () => {
+    assert.match(app, /^      - type: bind\n        source: \$\{POLYTRONX_EXECUTOR_CA_FILE:\?[^\n]+\}\n        target: \/etc\/polytronx\/executor-ca\/ca\.crt\n        read_only: true\n        bind:\n          create_host_path: false$/m);
+    assert.doesNotMatch(app, /executor-ca\/ca\.crt:ro/, "the short form cannot set create_host_path");
+    assert.match(app, /NODE_EXTRA_CA_CERTS: \/etc\/polytronx\/executor-ca\/ca\.crt$/m);
+  });
+
+  it("refuses an unset CA path", () => {
+    assert.match(caCheck(makeSandbox()), /^FAIL\s+POLYTRONX_EXECUTOR_CA_FILE is unset or a placeholder/);
+  });
+
+  it("refuses a missing CA file, and creates nothing at its path", () => {
+    const sb = makeSandbox();
+    assert.match(caCheck(sb, `${sb.root}/absent/executor-edge-ca.crt`), /^FAIL\s+POLYTRONX_EXECUTOR_CA_FILE does not exist/);
+    assert.equal(existsSync(`${sb.root}/absent`), false, "preflight must not create the mount source");
+  });
+
+  it("refuses a directory and a file that is not a PEM certificate", () => {
+    const sb = makeSandbox();
+    mkdirSync(`${sb.root}/ca-dir`);
+    assert.match(caCheck(sb, `${sb.root}/ca-dir`), /^FAIL\s+POLYTRONX_EXECUTOR_CA_FILE must be a readable regular file/);
+    const notCert = caFile(sb, "644", "sanitized placeholder\n", "not-a-cert.crt");
+    assert.match(caCheck(sb, notCert.path, notCert.env), /^FAIL\s+POLYTRONX_EXECUTOR_CA_FILE is not a PEM certificate/);
+  });
+
+  it("refuses a CA file that holds private-key bytes, even beside the certificate", () => {
+    const sb = makeSandbox();
+    const keyed = caFile(sb, "644", `${FIXTURE}${KEY_BEGIN}\nsanitized placeholder, not a key\n${KEY_END}\n`);
+    assert.match(caCheck(sb, keyed.path, keyed.env), /^FAIL\s+POLYTRONX_EXECUTOR_CA_FILE holds private-key bytes/);
+  });
+
+  it("refuses a CA file the container user cannot read: a root-only 0600 file passes root's read test, so the mode is what refuses it", () => {
+    for (const mode of ["600", "640"]) {
+      const sb = makeSandbox();
+      const { path, env } = caFile(sb, mode);
+      assert.match(caCheck(sb, path, env), new RegExp(`^FAIL\\s+POLYTRONX_EXECUTOR_CA_FILE is mode ${mode}; the control plane reads it as uid 1000`), mode);
+    }
+  });
+
+  it("follows a symlink to the CA file, so a link to a 0600 file is refused by the target's mode", { skip: process.platform === "win32" && "creating a symlink needs privileges on Windows; the Linux runner checks this" }, () => {
+    const sb = makeSandbox();
+    const target = `${sb.root}/target-ca.crt`;
+    writeFileSync(target, FIXTURE);
+    chmodSync(target, 0o600);
+    const link = `${sb.root}/linked-ca.crt`;
+    symlinkSync(target, link);
+    assert.match(caCheck(sb, link), /^FAIL\s+POLYTRONX_EXECUTOR_CA_FILE is mode 600/);
+  });
+
+  it("accepts the public CA certificate at mode 0644", { skip: !HAS_OPENSSL && "openssl is not installed" }, () => {
+    const sb = makeSandbox();
+    const { path, env } = caFile(sb, "644");
+    assert.match(caCheck(sb, path, env), /^PASS\s+executor edge CA is world-readable, holds a certificate and no private key/);
+  });
+
+  it("checks that openssl is installed before it reads the CA, so a host without it gets the tool error", () => {
+    const preflight = readFileSync(`${DEPLOY_DIR}/preflight.sh`, "utf8");
+    const toolError = preflight.indexOf('fail "openssl is required to verify POLYTRONX_EXECUTOR_CA_FILE"');
+    assert.ok(toolError > 0, "preflight.sh must name the missing tool");
+    assert.ok(toolError < preflight.indexOf('openssl x509 -in "$ca_file"'), "the tool check must come before the CA is parsed");
+  });
+
+  it("names the public CA under trust/, outside the secrets directory, in the release template", () => {
+    const template = readFileSync(`${DEPLOY_DIR}/templates/release.env.template`, "utf8").replace(/\r\n/g, "\n");
+    assert.match(template, /^POLYTRONX_EXECUTOR_CA_FILE=\/opt\/polytronx\/openinspect\/trust\/executor-edge-ca\.crt$/m);
+  });
+});
+
+describe("executor config and the 0090 migration", () => {
+  const compose = readFileSync(`${DEPLOY_DIR}/compose.executor.yml`, "utf8");
+  const executorSource = readFileSync(`${REPO_ROOT}/packages/vps-executor/src/index.ts`, "utf8");
+  const BASE_ENV = {
+    VPS_EXECUTOR_TOKEN: "x".repeat(32),
+    VPS_EXECUTOR_ADMISSION_SECRET: "y".repeat(32),
+    VPS_EXECUTOR_IMAGE: "open-inspect/sandbox:1",
+  };
+
+  it("has readConfig refuse a missing or non-https control-plane URL, and trim a trailing slash", async () => {
+    // The real function, loaded from source. index.ts imports only Node built-ins and its own files, so nothing is installed.
+    const { readConfig } = await import(pathToFileURL(`${REPO_ROOT}/packages/vps-executor/src/index.ts`).href);
+    assert.throws(() => readConfig(BASE_ENV), /VPS_EXECUTOR_CONTROL_PLANE_URL must be an absolute https URL/);
+    assert.throws(
+      () => readConfig({ ...BASE_ENV, VPS_EXECUTOR_CONTROL_PLANE_URL: "http://cp.example.test" }),
+      /VPS_EXECUTOR_CONTROL_PLANE_URL must be an absolute https URL/
+    );
+    const config = readConfig({ ...BASE_ENV, VPS_EXECUTOR_CONTROL_PLANE_URL: "https://cp.example.test/" });
+    assert.equal(config.controlPlaneUrl, "https://cp.example.test");
+  });
+
+  it("names only settings that readConfig reads, and sets the control-plane URL, so compose and code cannot drift apart", () => {
+    const names = [...new Set([...compose.matchAll(/^\s+(VPS_EXECUTOR_[A-Z_]+):/gm)].map((match) => match[1]))];
+    assert.ok(names.includes("VPS_EXECUTOR_CONTROL_PLANE_URL"), "compose must set the control-plane URL");
+    for (const name of names) assert.ok(executorSource.includes(`env.${name}`), `readConfig must read ${name}`);
+  });
+
+  it("makes 0090 the migration head, and the column it adds the one the control plane writes", () => {
+    const migrations = `${REPO_ROOT}/terraform/d1/migrations`;
+    const head = readdirSync(migrations).filter((name) => /^\d{4}_/.test(name)).sort().at(-1);
+    assert.equal(head, "0090_sandbox_admission_relinquished.sql");
+    assert.match(readFileSync(`${migrations}/${head}`, "utf8"), /ALTER TABLE sandbox_admission_reservations ADD COLUMN relinquished_at INTEGER;/);
+    assert.match(readFileSync(`${REPO_ROOT}/packages/control-plane/src/sandbox/admission/reservations.ts`, "utf8"), /relinquished_at/);
+  });
+});
+
+describe("runbook references resolve", () => {
+  // The deploy files an operator or a script follows: markdown, shell, compose, JS, templates and units.
+  const FILES = readdirSync(DEPLOY_DIR, { recursive: true })
+    .map(String)
+    .filter((file) => /\.(md|sh|mjs|yml|template|service|timer)$/.test(file))
+    .map((file) => join(DEPLOY_DIR, file));
+
+  it("every relative markdown link in the deploy files points at a file in the tree", () => {
+    const broken = [];
+    for (const file of FILES.filter((path) => path.endsWith(".md"))) {
+      for (const [, target] of readFileSync(file, "utf8").matchAll(/\]\(([^)\s#]+)(?:#[^)\s]*)?\)/g)) {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+        if (!existsSync(join(dirname(file), target))) broken.push(`${file}: ${target}`);
+      }
+    }
+    assert.deepEqual(broken, []);
+  });
+
+  it("every runbooks/<name>.md that a deploy file names exists, so no operator is sent to a missing page", () => {
+    const missing = [];
+    for (const file of FILES) {
+      for (const [, name] of readFileSync(file, "utf8").matchAll(/runbooks\/([A-Za-z0-9-]+\.md)/g)) {
+        if (!existsSync(join(DEPLOY_DIR, "runbooks", name))) missing.push(`${file}: runbooks/${name}`);
+      }
+    }
+    assert.deepEqual(missing, []);
   });
 });

@@ -31,6 +31,8 @@ import {
   type SandboxProvider,
   type CreateSandboxConfig,
   type CreateSandboxResult,
+  type RestoreConfig,
+  type SandboxAdmissionProof,
   type SandboxLifetime,
   type StopConfig,
 } from "../provider";
@@ -82,6 +84,9 @@ import type {
 import { shutdownPolicyForLaunch, type ShutdownLifecyclePolicy } from "./shutdown-policy";
 import type { SandboxAccess } from "./sandbox-access";
 import { SandboxLaunchExpiredError, SpawnSupersededError } from "./startup-errors";
+import { admissionIdentity, type SandboxAdmissionGate } from "../admission/gate";
+import type { SandboxAdmissionIdentity } from "../admission/reservations";
+import { parseVpsPendingVmReference } from "../providers/pending-vm-reference";
 import {
   VmStartupReconciliation,
   type VmStartupReconciliationStorage,
@@ -408,6 +413,20 @@ export type UnresponsiveSandboxTrigger =
   | "stop_alarm_failed"
   | "stop_confirmation_timeout";
 
+/** A claimed admission slot: the identity the gate settles it by, and the proof sent to the provider. */
+interface AdmittedLease {
+  identity: SandboxAdmissionIdentity;
+  proof: SandboxAdmissionProof;
+}
+
+/** Attaches a claimed slot's proof to a provider config. Without a claim the config is unchanged. */
+function withAdmissionProof<T extends CreateSandboxConfig | RestoreConfig>(
+  config: T,
+  admitted: AdmittedLease | null
+): T {
+  return admitted ? { ...config, admissionLease: admitted.proof } : config;
+}
+
 /**
  * Manages sandbox lifecycle operations.
  *
@@ -474,7 +493,9 @@ export class SandboxLifecycleManager
     private readonly access: SandboxAccess,
     private readonly config: SandboxLifecycleConfig,
     imageBuildLookup?: ImageBuildLookup,
-    backgroundTasks?: BackgroundTasks
+    backgroundTasks?: BackgroundTasks,
+    /** Unset keeps the pre-admission behavior: no slot is claimed before a provider call. */
+    private readonly admission?: SandboxAdmissionGate
   ) {
     this.launchContext = new SandboxLaunchContext({
       sessionContext,
@@ -502,6 +523,7 @@ export class SandboxLifecycleManager
       getLogger: () => this.log,
       alarmScheduler,
       backgroundTasks,
+      admission,
     });
     this.allocationCleanup = {
       storage,
@@ -794,8 +816,13 @@ export class SandboxLifecycleManager
 
       const priorSandbox = this.storage.getSandbox();
       const priorSandboxId = priorSandbox?.modal_sandbox_id ?? null;
+      // Read before reserveSpawnIdentity rewrites created_at: the prior object's lease is fenced to this generation.
+      const priorCreatedAt = priorSandbox?.created_at;
+      const priorObjectId = priorSandbox?.modal_object_id ?? null;
       // A fenced allocation must be retired before its durable identity is replaced.
-      if (priorSandbox?.fenced) await this.stopPriorProviderSandbox(true);
+      if (priorSandbox?.fenced) await this.stopPriorProviderSandbox(priorCreatedAt, true);
+      // The mark precedes the generation write: if it throws, the spawn aborts before that write.
+      await this.relinquishPriorObject(priorObjectId);
       this.storage.setLastSpawnError(null, null);
       const now = Date.now();
       const reserved = this.spawnGeneration(session, now);
@@ -804,7 +831,7 @@ export class SandboxLifecycleManager
         preserveProviderObjectId: true,
         shutdownPolicy: shutdownPolicyForLaunch("new", null),
       });
-      await this.stopPriorProviderSandbox();
+      await this.stopPriorProviderSandbox(priorCreatedAt);
 
       const userEnvVars = await this.launchContext.getUserEnvVars();
       const agent = this.launchContext.resolveAgent(session);
@@ -848,15 +875,26 @@ export class SandboxLifecycleManager
         ...repositoryFields,
       };
 
+      const admitted = await this.claimAdmission(session, reserved, createConfig);
       this.vmStartup.registerForegroundAuth(generation, sessionId, sandboxAuthToken);
 
       let result: CreateSandboxResult;
       try {
-        await this.vmStartup.recordPendingProviderReference(generation, createConfig);
-        const created = await this.vmStartup.createWithVmRecovery(createConfig, generation);
+        await this.beginAdmittedCall(admitted, () =>
+          this.vmStartup.recordPendingProviderReference(reserved, createConfig)
+        );
+        const created = await this.vmStartup.createWithVmRecovery(
+          withAdmissionProof(createConfig, admitted),
+          generation,
+          admitted?.identity
+        );
         if (!created) return;
         result = created;
+        await this.settleAdmission(admitted, result.providerObjectId);
       } catch (error) {
+        // A rejected launch names the object it created, so its lease can be settled before cleanup stops it.
+        if (error instanceof SandboxLaunchRejectedError)
+          await this.settleAdmission(admitted, error.providerObjectId);
         if (!selectedImage) throw error;
         if (!(error instanceof PrebuiltImageUnavailableError)) {
           if (error instanceof SandboxProviderError && error.errorType === "transient") {
@@ -900,10 +938,19 @@ export class SandboxLifecycleManager
           prebuiltImageId: null,
           prebuiltImageSha: null,
         };
-        await this.vmStartup.recordPendingProviderReference(generation, retryConfig);
-        const created = await this.vmStartup.createWithVmRecovery(retryConfig, generation);
+        // A fresh generation claims a fresh lease; the failed attempt's lease is never reused.
+        const retryAdmitted = await this.claimAdmission(session, retry, retryConfig);
+        await this.beginAdmittedCall(retryAdmitted, () =>
+          this.vmStartup.recordPendingProviderReference(retry, retryConfig)
+        );
+        const created = await this.vmStartup.createWithVmRecovery(
+          withAdmissionProof(retryConfig, retryAdmitted),
+          generation,
+          retryAdmitted?.identity
+        );
         if (!created) return;
         result = created;
+        await this.settleAdmission(retryAdmitted, result.providerObjectId);
       }
 
       if (!(await this.claimProviderStartup(generation, result.providerObjectId, result.lifetime)))
@@ -1132,8 +1179,13 @@ export class SandboxLifecycleManager
 
       const priorSandbox = this.storage.getSandbox();
       const priorSandboxId = priorSandbox?.modal_sandbox_id ?? null;
+      // Read before reserveSpawnIdentity rewrites created_at: the prior object's lease is fenced to this generation.
+      const priorCreatedAt = priorSandbox?.created_at;
+      const priorObjectId = priorSandbox?.modal_object_id ?? null;
       // A fenced allocation must be retired before its durable identity is replaced.
-      if (priorSandbox?.fenced) await this.stopPriorProviderSandbox(true);
+      if (priorSandbox?.fenced) await this.stopPriorProviderSandbox(priorCreatedAt, true);
+      // The mark precedes the generation write: if it throws, the restore aborts before that write.
+      await this.relinquishPriorObject(priorObjectId);
       this.storage.setLastSpawnError(null, null);
       const now = Date.now();
       const reserved = this.spawnGeneration(session, now);
@@ -1150,7 +1202,7 @@ export class SandboxLifecycleManager
       // ready handler only fills a row with nothing recorded yet.
       this.storage.updateSandboxRuntimeVersion(snapshotRuntimeVersion);
 
-      await this.stopPriorProviderSandbox();
+      await this.stopPriorProviderSandbox(priorCreatedAt);
 
       const userEnvVars = await this.launchContext.getUserEnvVars();
       const agent = this.launchContext.resolveAgent(session);
@@ -1184,18 +1236,24 @@ export class SandboxLifecycleManager
         sandboxSettings,
         ...repositoryFields,
       };
+      const admitted = await this.claimAdmission(session, reserved, restoreConfig);
       this.vmStartup.registerForegroundAuth(generation, restoreConfig.sessionId, sandboxAuthToken);
-      await this.vmStartup.recordPendingProviderReference(generation, restoreConfig);
+      await this.beginAdmittedCall(admitted, () =>
+        this.vmStartup.recordPendingProviderReference(reserved, restoreConfig)
+      );
       this.shutdown.markRecoveryInvoked(generation);
       let result;
       try {
-        result = await this.provider.restoreFromSnapshot(restoreConfig);
+        result = await this.provider.restoreFromSnapshot(
+          withAdmissionProof(restoreConfig, admitted)
+        );
       } catch (error) {
         if (!this.provider.isUnknownStartupError?.(error)) throw error;
         const recovered = await this.vmStartup.resolveUnknownVmStartup(generation, restoreConfig);
         if (!recovered) return;
         result = { ...recovered, success: true as const };
       }
+      await this.settleAdmission(admitted, result.providerObjectId);
 
       if (result.success) {
         if (
@@ -1511,11 +1569,27 @@ export class SandboxLifecycleManager
   }
 
   /**
-   * Stop a sandbox that is about to be replaced before its provider handle is cleared.
+   * Marks the prior object as no longer the session's before the replacement generation is written, so the reconcile
+   * hook can stop and free it with no newer lease. A failed mark throws, which aborts the replacement before that
+   * write, so the object stays the session's live one. A mark whose replacement then fails names an object the
+   * replacement was about to stop, so the reconcile hook stopping it first only changes who makes that stop.
    */
-  private async stopPriorProviderSandbox(requireConfirmation = false): Promise<void> {
-    const prior = this.storage.getSandbox();
-    const providerObjectId = prior?.modal_object_id;
+  private async relinquishPriorObject(priorObjectId: string | null): Promise<void> {
+    const session = this.sessionContext.getSession();
+    if (!priorObjectId || !session || !this.admission) return;
+    await this.admission.relinquish(session.id, priorObjectId, Date.now());
+  }
+
+  /**
+   * Stop a sandbox that is about to be replaced before its provider handle is cleared. `priorCreatedAt` is the
+   * generation the prior object was claimed under, read before the identity is rewritten, so the release is fenced
+   * to that lease. An admitted object keeps its handle on an unconfirmed stop, since only a confirmed stop frees its slot.
+   */
+  private async stopPriorProviderSandbox(
+    priorCreatedAt: number | undefined,
+    requireConfirmation = false
+  ): Promise<void> {
+    const providerObjectId = this.storage.getSandbox()?.modal_object_id;
     if (!providerObjectId) {
       return;
     }
@@ -1525,23 +1599,23 @@ export class SandboxLifecycleManager
       return;
     }
 
+    // An admitted object's slot frees only on a confirmed stop, and a VPS pending reference is the only handle on a
+    // create that may still land, so an unconfirmed stop keeps the handle in both cases.
+    const keepsRef =
+      requireConfirmation ||
+      this.admission !== undefined ||
+      parseVpsPendingVmReference(providerObjectId) !== null;
     try {
       const outcome = await boundedProviderStop(
         (signal) =>
-          this.stopProviderSandbox(
-            "respawn",
-            "destroy",
-            signal,
-            providerObjectId,
-            prior?.created_at
-          ),
+          this.stopProviderSandbox("respawn", "destroy", signal, providerObjectId, priorCreatedAt),
         "Provider stop timed out before sandbox replacement"
       );
-      if (requireConfirmation && outcome !== "confirmed")
+      if (keepsRef && outcome !== "confirmed")
         throw new Error("Provider stop could not be dispatched before sandbox replacement");
       this.storage.updateSandboxModalObjectId(null);
     } catch (error) {
-      if (requireConfirmation) throw error;
+      if (keepsRef) throw error;
       this.storage.updateSandboxModalObjectId(null);
       this.log.warn("Provider stop failed before sandbox replacement", {
         provider_object_id: providerObjectId,
@@ -1583,6 +1657,20 @@ export class SandboxLifecycleManager
     if (!result.success) {
       throw new Error(result.error || "Failed to stop provider sandbox");
     }
+    // A confirmed stop is the only release path for a recorded object: the slot frees with it, from any state.
+    const released = await this.admission?.releaseStopped(
+      session.id,
+      objectId,
+      generationCreatedAtMs ?? sandbox?.created_at
+    );
+    if (released === "refused")
+      throw new Error("Sandbox admission lease could not be released after its provider stop");
+    if (released === "absent")
+      this.log.info("Confirmed provider stop held no admission lease", {
+        event: "sandbox.admission_release_absent",
+        reason,
+        provider_object_id: objectId,
+      });
     return "confirmed";
   }
 
@@ -2130,6 +2218,58 @@ export class SandboxLifecycleManager
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  /** Claims the attempt's slot before any provider call. Null when no admission gate is configured. */
+  private async claimAdmission(
+    session: SessionRow,
+    generation: SandboxGeneration & { sandboxId: string },
+    config: Pick<
+      CreateSandboxConfig,
+      "sessionId" | "sandboxId" | "generationCreatedAtMs" | "timeoutSeconds"
+    >
+  ): Promise<AdmittedLease | null> {
+    if (!this.admission) return null;
+    const identity = admissionIdentity(session, generation);
+    const operationRef =
+      this.provider.pendingSandboxAllocation?.(config)?.reference ?? generation.sandboxId;
+    // The gate returns the proof its row holds, so a retried claim sends the expiry its first claim was signed with.
+    const proof = await this.admission.claim(identity, operationRef, Date.now());
+    return { identity, proof };
+  }
+
+  /**
+   * Runs `prepare`, then authorizes the provider call that follows it. A lease whose
+   * prepare failed never began a call, so it is released rather than left to expire.
+   */
+  private async beginAdmittedCall(
+    admitted: AdmittedLease | null,
+    prepare: () => Promise<void>
+  ): Promise<void> {
+    try {
+      await prepare();
+    } catch (error) {
+      if (admitted && (await this.admission?.release(admitted.identity)) === "refused")
+        this.log.warn("Unstarted admission lease was not released", {
+          event: "sandbox.admission_release_refused",
+        });
+      throw error;
+    }
+    if (admitted) await this.admission?.begin(admitted.identity, Date.now());
+  }
+
+  /** Records a provider object under its lease. A refused write leaves an object the gate cannot count, so it is logged. */
+  private async settleAdmission(
+    admitted: AdmittedLease | null,
+    modalObjectId: string | null | undefined
+  ): Promise<void> {
+    if (!admitted || !modalObjectId || !this.admission) return;
+    const update = await this.admission.settle(admitted.identity, modalObjectId, Date.now());
+    if (update === "refused")
+      this.log.error("Provider object has no admission lease", {
+        event: "sandbox.admission_untracked",
+        provider_object_id: modalObjectId,
+      });
   }
 
   private async claimProviderStartup(

@@ -2,6 +2,7 @@ import type { HarnessId } from "@open-inspect/shared/harnesses";
 import type { McpServerConfig } from "@open-inspect/shared/types/integrations";
 import { computeHmacHex } from "@open-inspect/shared/auth";
 import type { SourceControlProviderName } from "../source-control";
+import { SecretsValidationError, normalizeKey, validateKey } from "../db/secrets-validation";
 import {
   DEFAULT_SANDBOX_TIMEOUT_SECONDS,
   type CreateSandboxConfig,
@@ -299,6 +300,29 @@ export interface SandboxEnvVarsOptions {
    * user secrets). System vars still overlay whatever is passed here.
    */
   baseEnvVars?: Record<string, string>;
+}
+
+/**
+ * Splits a user env layer into the keys the runtime accepts and the names it refuses. A key `validateKey` rejects
+ * fails every boot of its session. The save rule only checks new keys, so one saved before it can still reach here.
+ * A lowercase key is refused rather than normalized: the executor reads the raw key.
+ */
+export function partitionUserEnvVars(userEnvVars: Record<string, string>): {
+  accepted: Record<string, string>;
+  refused: string[];
+} {
+  const accepted: Record<string, string> = {};
+  const refused: string[] = [];
+  for (const [key, value] of Object.entries(userEnvVars)) {
+    try {
+      if (key !== normalizeKey(key)) throw new SecretsValidationError("Key must be uppercase");
+      validateKey(key);
+      accepted[key] = value;
+    } catch {
+      refused.push(key);
+    }
+  }
+  return { accepted, refused };
 }
 
 /**

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Test stub for the host tools workspace-slots.sh calls. One file answers under every name it is
+# installed as (findmnt, losetup, blkid, fallocate, mkfs.ext4, mount, stat, df, id, chmod, systemctl),
+# from the state directory $HT_STATE, so a test decides what the host looks like. Nothing is mounted,
+# formatted or changed, and every call is recorded in $STUB_LOG.
+name="$(basename "$0")"
+enc() { printf '%s' "$1" | tr '/:' '%%'; }
+printf '%s %s\n' "$name" "$*" >>"$STUB_LOG"
+last="${!#}"
+case "$name" in
+  id) echo 0 ;;
+  systemctl | chmod) ;;
+  df) printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nstub 1 1 %s 10%% %s\n' "${HT_FREE_KB:-0}" "$last" ;;
+  fallocate) : >"$last" ;;
+  mkfs.ext4)
+    [ -z "${HT_MKFS_FAIL:-}" ] || exit 1
+    mkdir -p "$HT_STATE/fs"
+    : >"$HT_STATE/fs/$(enc "$last")"
+    ;;
+  blkid)
+    [ -e "$HT_STATE/fs/$(enc "$last")" ] || exit 2
+    echo ext4
+    ;;
+  stat)
+    if [ "$1" = -f ]; then
+      cat "$HT_STATE/statfs/$(enc "$4")" 2>/dev/null || echo "ef53 4096 2600000"
+      exit 0
+    fi
+    path="$3"
+    if [ -e "$HT_STATE/stat/$(enc "$path")" ]; then
+      cat "$HT_STATE/stat/$(enc "$path")"
+      exit 0
+    fi
+    case "$path" in
+      "$HT_BASE/images/"*) echo "0 0 600 10737418240" ;;
+      "$HT_BASE/images") echo "0 0 700" ;;
+      "$HT_BASE/slots/"*)
+        if [ -e "$HT_STATE/mounted/${path##*/}" ]; then echo "1000 1000 700"; else echo "0 0 700"; fi
+        ;;
+      *) echo "0 0 755" ;;
+    esac
+    ;;
+  findmnt)
+    case "$last" in
+      "$HT_BASE/slots/"*)
+        k="${last##*/}"
+        if [ -e "$HT_STATE/mounted/$k" ]; then
+          echo "$last /dev/loop$k ext4 rw,nosuid,nodev,noatime"
+          exit 0
+        fi
+        ;;
+    esac
+    echo "/ /dev/sda1 ext4 rw,relatime"
+    ;;
+  losetup) cat "$HT_STATE/mounted/${last#/dev/loop}" 2>/dev/null ;;
+  mount)
+    [ "$1" != -a ] || {
+      echo "host-tool: mount -a is refused by the test" >&2
+      exit 99
+    }
+    [ -z "${HT_MOUNT_FAIL:-}" ] || exit 32
+    image="$(awk -v d="$1" '$2 == d { print $1; exit }' "$HT_FSTAB")"
+    [ -n "$image" ] || {
+      echo "mount: $1: mount point not in fstab" >&2
+      exit 32
+    }
+    mkdir -p "$HT_STATE/mounted"
+    printf '%s' "$image" >"$HT_STATE/mounted/${1##*/}"
+    ;;
+  *)
+    echo "host-tool: no answer for $name" >&2
+    exit 2
+    ;;
+esac

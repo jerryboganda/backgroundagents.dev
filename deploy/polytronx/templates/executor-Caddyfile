@@ -1,0 +1,29 @@
+# polytronx-owned: private-executor-edge
+# Rendered by deploy/polytronx/private-executor-edge.sh. Do not edit the rendered copy by hand;
+# change the template or the script's inputs and re-run apply, which backs up the owned copy first.
+#
+# Private HTTPS ingress for the VPS executor: TLS on one address and port, one allowed source,
+# forwarded to the executor on loopback. No plaintext listener and no ACME: certificates come
+# from the private CA that the script creates on the host.
+{
+	admin off
+	auto_https off
+	# Clients that connect by IP address send no SNI; this selects the edge address certificate for them.
+	default_sni __EDGE_ADDRESS__
+	persist_config off
+}
+
+https://__EDGE_ADDRESS__:__EDGE_PORT__ {
+	bind __EDGE_ADDRESS__
+	tls "__TLS_CERT__" "__TLS_KEY__" {
+		protocols tls1.2 tls1.3
+	}
+
+	@dashboard remote_ip __DASHBOARD_SOURCE__
+	handle @dashboard {
+		reverse_proxy __UPSTREAM__
+	}
+	handle {
+		respond 403
+	}
+}

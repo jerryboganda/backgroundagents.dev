@@ -20,6 +20,7 @@ import type { SqlDatabase } from "./db/sql-database";
 import { IMAGE_BUILD_SCHEDULER_CRON, runImageBuildScheduler } from "./image-builds/scheduler";
 import type { CorrelationContext, Logger } from "./logger";
 import type { BackgroundTasks } from "./platform-ports";
+import { isVpsSandboxBackend, reconcileVpsAdmission } from "./sandbox/admission/vps-reconcile";
 import { Scheduler } from "./scheduler/scheduler";
 import {
   ABANDONED_DRAFT_SWEEP_CRON,
@@ -59,6 +60,11 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
       backgroundTasks.submit(() => checkAutofixQueueHealth(env, log), {
         name: "autofix_queue_health",
       });
+      // Settles VPS admission leases the executor may hold an object for. Only a VPS deployment has any.
+      if (isVpsSandboxBackend(env))
+        backgroundTasks.submit(() => reconcileVpsAdmission(env, db, Date.now(), log), {
+          name: "vps_admission_reconcile",
+        });
       // The tick runs both the recovery sweep (orphaned/timed-out runs) and
       // processes overdue automations.
       await new Scheduler(db, env, backgroundTasks).tick();

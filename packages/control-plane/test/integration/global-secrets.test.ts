@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { SELF } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
 import { cleanD1Tables } from "./cleanup";
 import { serviceFetch } from "./helpers";
 
@@ -104,5 +104,20 @@ describe("Global secrets API", () => {
       });
       expect(response.status).toBe(404);
     });
+
+    it.each(["_LEGACY", "PYTHONPATH", "B".repeat(200)])(
+      "deletes %s, stored under the pre-strict save rule",
+      async (key) => {
+        await env.DB.prepare(
+          "INSERT INTO global_secrets (key, encrypted_value, created_at, updated_at) VALUES (?, ?, ?, ?)"
+        )
+          .bind(key, "ciphertext", 1, 1)
+          .run();
+        const response = await serviceFetch(`https://test.local/secrets/${key}`, {
+          method: "DELETE",
+        });
+        expect(response.status).toBe(200);
+      }
+    );
   });
 });

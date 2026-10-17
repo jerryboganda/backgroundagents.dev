@@ -318,9 +318,26 @@ describe("team secrets routes", () => {
     expect((await request(`/teams/${teamId}/secrets/BAD-KEY`, { method: "DELETE" })).status).toBe(
       400
     );
-    expect((await request(`/teams/${teamId}/secrets/PATH`, { method: "DELETE" })).status).toBe(400);
+    // Reserved names are never stored, so the delete finds nothing rather than refusing the name.
+    expect((await request(`/teams/${teamId}/secrets/PATH`, { method: "DELETE" })).status).toBe(404);
     expect(await store.listSecretKeys(teamId)).toHaveLength(MAX_SECRETS_PER_SCOPE);
   });
+
+  it.each(["_LEGACY", "PYTHONPATH", "B".repeat(200)])(
+    "deletes %s, stored under the pre-strict save rule",
+    async (key) => {
+      await env.DB.prepare(
+        "INSERT INTO team_secrets (team_id, key, encrypted_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+      )
+        .bind(teamId, key, "ciphertext", 1, 1)
+        .run();
+      const deleted = await request(`/teams/${teamId}/secrets/${key.toLowerCase()}`, {
+        method: "DELETE",
+      });
+      expect(deleted.status).toBe(200);
+      expect((await store.listSecretKeys(teamId)).map((secret) => secret.key)).toEqual(["TOKEN"]);
+    }
+  );
 
   it("requires a real team and configured encryption key for every method", async () => {
     for (const method of METHODS) {

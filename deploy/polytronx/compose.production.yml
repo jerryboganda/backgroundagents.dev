@@ -52,11 +52,22 @@ services:
       OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:?OBJECT_STORE_BUCKET must name the media bucket in release.env}
       LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:?LITESTREAM_BUCKET must name the backup bucket in release.env}
       LITESTREAM_ENDPOINT: http://object-store:9000
+      # Private trust for the executor's private HTTPS edge: the public CA certificate only, read-only.
+      # Its key stays on the executor host (runbooks/private-edge.md).
+      NODE_EXTRA_CA_CERTS: /etc/polytronx/executor-ca/ca.crt
     stop_grace_period: 40s
     ports:
       - "127.0.0.1:${CONTROL_PLANE_LOOPBACK_PORT:-18787}:8787"
     volumes:
       - control-plane-data:/data
+      # The public CA certificate, read-only. create_host_path is false: a missing file stops the start
+      # instead of Docker creating a directory at the path. preflight.sh checks the file before deploy.
+      - type: bind
+        source: ${POLYTRONX_EXECUTOR_CA_FILE:?POLYTRONX_EXECUTOR_CA_FILE must name the public executor-edge ca.crt, never ca.key}
+        target: /etc/polytronx/executor-ca/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       edge:
         # The NPM forward hostname for cp.ai (templates/npm-edge-proxy.md). Unique on purpose:

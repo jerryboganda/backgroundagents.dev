@@ -153,5 +153,13 @@ describe.each(["owner", "administrator"] as const)(
         expect((await request(path, method, body)).status).toBe(200);
       }
     );
+
+    it.each(["_LEGACY", "PYTHONPATH"])(
+      "deletes %s, stored under the pre-strict save rule",
+      async (key) => {
+        expect((await request(`/repos/acme/repo/secrets/${key}`, "DELETE")).status).toBe(200);
+        expect(RepoSecretsStore.prototype.deleteSecret).toHaveBeenCalledWith(123, key);
+      }
+    );
   }
 );

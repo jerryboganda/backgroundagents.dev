@@ -11,7 +11,11 @@ import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import { EnvironmentStore, type EnvironmentRow } from "../db/environments";
 import { EnvironmentSecretsStore } from "../db/environment-secrets";
 import { GlobalSecretsStore } from "../db/global-secrets";
-import { SecretsValidationError, normalizeKey, validateKey } from "../db/secrets-validation";
+import {
+  SecretsValidationError,
+  normalizeKey,
+  validateKeyForDelete,
+} from "../db/secrets-validation";
 import {
   scheduleImageBuildOnSave,
   supersedeImageBuildsForSecretsChange,
@@ -192,7 +196,7 @@ async function handleDeleteEnvironmentSecret(
   const secretsStore = new EnvironmentSecretsStore(ctx.db, config.key);
   try {
     const normalizedKey = normalizeKey(key);
-    validateKey(normalizedKey);
+    validateKeyForDelete(normalizedKey);
 
     const deleted = await secretsStore.deleteSecret(id, key);
     if (!deleted) return error("Secret not found", 404);

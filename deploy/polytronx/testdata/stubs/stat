@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Windows-only test shim, installed by test-harness.mjs only where node runs on Windows. NTFS cannot
 # hold POSIX modes: chmod 600 reads back as 644 there, so the owner-only checks would refuse every
-# key. This answers `stat -c %a` with 600. Linux runners use the real stat, which is what matters.
+# key. This answers `stat -c %a` with STUB_STAT_MODE, 600 unless a test names another mode. Linux
+# runners use the real stat, which is what matters.
+[ "$1" = "-L" ] && shift
 if [ "$1" = "-c" ] && [ "$2" = "%a" ]; then
-  echo 600
+  echo "${STUB_STAT_MODE:-600}"
   exit 0
 fi
 echo "stat shim: only stat -c %a is supported on Windows" >&2

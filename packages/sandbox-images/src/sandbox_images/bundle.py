@@ -10,13 +10,13 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path
-from typing import Any, NamedTuple, TypedDict
+from typing import Any, NamedTuple, NotRequired, TypedDict
 
 from .configuration import IMAGE_PACKAGE, RUNTIME_PACKAGE, read_json, runtime_environment
 from .locks import update_locks
 
 DOCKER_PACKAGES = ("engine", "cli", "containerd", "buildx", "compose")
-PROVIDERS = ("modal", "daytona", "e2b", "vercel", "opencomputer")
+PROVIDERS = ("modal", "daytona", "e2b", "vercel", "opencomputer", "vps")
 EXCLUDED = {
     ".terraform",
     ".git",
@@ -38,12 +38,16 @@ PAYLOAD_ROOTS = (
     RUNTIME_PACKAGE / "uv.lock",
     *(IMAGE_PACKAGE / part for part in ("install", "verify", "locks", "toolchain.json")),
 )
-INFRA_MODULES = {
+# Only the VPS image packs the bootstrap wrapper; other providers' payloads do not include it.
+VPS_PAYLOAD_ROOTS = (IMAGE_PACKAGE / "vps",)
+INFRA_MODULES: dict[str, str | None] = {
     "modal": "modal-app",
     "daytona": "daytona-infra",
     "e2b": "e2b-infra",
     "vercel": "vercel-sandbox-infra",
     "opencomputer": "opencomputer-infra",
+    # The VPS image is defined by Dockerfile.vps alone; there is no provider infrastructure.
+    "vps": None,
 }
 
 
@@ -53,6 +57,8 @@ class ImageTarget(TypedDict):
     node: str
     user: str
     home: str
+    uid: NotRequired[int]
+    gid: NotRequired[int]
 
 
 class ImagePlan(TypedDict):
@@ -141,6 +147,19 @@ def source_files(root: Path, paths: tuple[Path, ...]) -> list[Path]:
     return files
 
 
+def packed_file(path: Path) -> tuple[bytes, int]:
+    """Packed bytes and mode, used by both the build hash and the pack so they agree on every host.
+
+    NUL-free `.sh` and `#!` files are scripts: CRLF becomes LF and the mode is 0o755. Everything else
+    keeps its bytes at 0o644. Lone CR and binary bytes are kept. The checkout's mode is ignored because
+    NTFS reports 0o666 for every file.
+    """
+    data = path.read_bytes()
+    if b"\0" in data or not (path.suffix == ".sh" or data.startswith(b"#!")):
+        return data, 0o644
+    return data.replace(b"\r\n", b"\n"), 0o755
+
+
 def plan_image(root: Path, provider: str) -> ImagePlan:
     root = root.resolve()
     if provider not in PROVIDERS:
@@ -155,11 +174,16 @@ def plan_image(root: Path, provider: str) -> ImagePlan:
         IMAGE_PACKAGE / "pyproject.toml",
         IMAGE_PACKAGE / "uv.lock",
         IMAGE_PACKAGE / "targets.json",
-        Path(f"packages/{provider}-infra"),
-        Path(f"terraform/modules/{INFRA_MODULES[provider]}"),
     )
+    if INFRA_MODULES[provider] is not None:
+        paths += (
+            Path(f"packages/{provider}-infra"),
+            Path(f"terraform/modules/{INFRA_MODULES[provider]}"),
+        )
     if provider in ("vercel", "opencomputer"):
         paths += (Path("package-lock.json"),)
+    if provider == "vps":
+        paths += (IMAGE_PACKAGE / "Dockerfile.vps", *VPS_PAYLOAD_ROOTS)
     if provider == "vercel":
         paths += (
             Path("packages/control-plane/src"),
@@ -170,10 +194,13 @@ def plan_image(root: Path, provider: str) -> ImagePlan:
         )
     digest = hashlib.sha256(provider.encode())
     for path in source_files(root, paths):
-        # Boundaries, executable bits and link destinations also affect the build.
-        content = str(path.readlink()).encode() if path.is_symlink() else path.read_bytes()
+        # Boundaries, modes and link destinations also affect the build.
+        if path.is_symlink():
+            content, mode = str(path.readlink()).encode(), 0o777
+        else:
+            content, mode = packed_file(path)
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
-        digest.update(str(stat.S_IMODE(path.lstat().st_mode)).encode() + b"\0")
+        digest.update(str(mode).encode() + b"\0")
         digest.update(hashlib.sha256(content).digest())
     return {
         "provider": provider,
@@ -194,11 +221,26 @@ def pack_bundle(root: Path, provider: str, output_root: Path) -> PackedBundle:
     output_root.mkdir(parents=True, exist_ok=True)
     destination = Path(tempfile.mkdtemp(prefix=f"{provider}-", dir=output_root))
     try:
-        for source in source_files(root, PAYLOAD_ROOTS):
+        payload = (*PAYLOAD_ROOTS, *VPS_PAYLOAD_ROOTS) if provider == "vps" else PAYLOAD_ROOTS
+        for source in source_files(root, payload):
             target = destination / source.relative_to(root)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target, follow_symlinks=False)
-        (destination / "build-config.json").write_text(json.dumps(plan) + "\n")
+            if source.is_symlink():
+                shutil.copy2(source, target, follow_symlinks=False)
+            else:
+                content, mode = packed_file(source)
+                target.write_bytes(content)
+                shutil.copystat(source, target)
+                target.chmod(mode)
+                # The hash promises this mode; never ship a different artifact.
+                kept = stat.S_IMODE(target.stat().st_mode)
+                if kept != mode:
+                    raise RuntimeError(
+                        f"{source.relative_to(root)} kept mode {kept:o}, not {mode:o}. "
+                        "Standard packs need a POSIX filesystem; run pack on Linux or macOS."
+                    )
+        # Generated text is LF on every host, like the packed scripts.
+        (destination / "build-config.json").write_text(json.dumps(plan) + "\n", newline="\n")
         toolchain = read_json(root / IMAGE_PACKAGE / "toolchain.json")
         variables = {
             "OI_BUILD_CACHE_KEY": plan["buildHash"],
@@ -206,6 +248,8 @@ def pack_bundle(root: Path, provider: str, output_root: Path) -> PackedBundle:
             "OI_OS": plan["target"]["os"],
             "OI_RUNTIME_USER": plan["target"]["user"],
             "OI_RUNTIME_HOME": plan["target"]["home"],
+            "OI_RUNTIME_UID": str(plan["target"].get("uid", "")),
+            "OI_RUNTIME_GID": str(plan["target"].get("gid", "")),
             "PYTHON_VERSION": toolchain["python"],
             "AGENT_BROWSER_VERSION": toolchain["agentBrowser"],
             "AGENT_BROWSER_SHA256": toolchain["agentBrowserSha256"],
@@ -231,7 +275,8 @@ def pack_bundle(root: Path, provider: str, output_root: Path) -> PackedBundle:
             variables[f"DOCKER_{package.upper()}_SHA256"] = pin["sha256"]
         (destination / "image-config.sh").write_text(
             "\n".join(f"export {key}={shlex.quote(value)}" for key, value in variables.items())
-            + "\n"
+            + "\n",
+            newline="\n",
         )
 
         return PackedBundle(destination, plan)

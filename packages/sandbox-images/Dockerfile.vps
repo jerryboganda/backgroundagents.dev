@@ -1,0 +1,50 @@
+# VPS runtime image. The context is the output of sandbox:images pack, not the checkout.
+# BASE_IMAGE is digest-pinned to the official Docker Hub library/python index; keep it equal to targets.json vps.base.
+# ponytail: install phases are copied from Dockerfile; extract one parameterized Dockerfile if they diverge.
+ARG BASE_IMAGE=python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+FROM ${BASE_IMAGE}
+COPY image-config.sh /tmp/openinspect-image/image-config.sh
+COPY packages/sandbox-images/install/install.sh packages/sandbox-images/install/common.sh /tmp/openinspect-image/packages/sandbox-images/install/
+COPY packages/sandbox-images/install/os /tmp/openinspect-image/packages/sandbox-images/install/os
+RUN bash /tmp/openinspect-image/packages/sandbox-images/install/install.sh os
+COPY packages/sandbox-images/install/languages.sh /tmp/openinspect-image/packages/sandbox-images/install/languages.sh
+RUN bash /tmp/openinspect-image/packages/sandbox-images/install/install.sh languages
+COPY packages/sandbox-images/locks/tools /tmp/openinspect-image/packages/sandbox-images/locks/tools
+COPY packages/sandbox-images/locks/plugins /tmp/openinspect-image/packages/sandbox-images/locks/plugins
+COPY packages/sandbox-images/install/tools.sh /tmp/openinspect-image/packages/sandbox-images/install/tools.sh
+RUN bash /tmp/openinspect-image/packages/sandbox-images/install/install.sh tools
+COPY . /tmp/openinspect-image
+RUN bash /tmp/openinspect-image/packages/sandbox-images/install/install.sh runtime filesystem
+# A bind mount hides the baked /home/sandbox and Docker copies nothing into it, so the entrypoint seeds HOME from
+# this root-owned copy. It is taken before the install smoke writes into the home. Xvfb needs a root-owned sticky
+# socket directory that UID 1000 cannot create at boot. UID 1000 reads the seed as another user, so the copy is made
+# world-readable here, at build time only. OpenCode session and auth files from the build are removed before the
+# copy; the seed contract refuses them.
+RUN install -m 0755 /tmp/openinspect-image/packages/sandbox-images/vps/entrypoint.sh /usr/local/bin/openinspect-entrypoint \
+    && install -d -m 0755 /app/home-seed \
+    && rm -rf /home/sandbox/.local/share/opencode/opencode.db* \
+        /home/sandbox/.local/share/opencode/auth.json \
+        /home/sandbox/.local/share/opencode/log \
+        /home/sandbox/.local/share/opencode/storage \
+        /home/sandbox/.local/share/opencode/snapshot \
+    && cp -a --no-preserve=ownership /home/sandbox/. /app/home-seed/ \
+    && chmod -R a+rX /app/home-seed \
+    && install -d -m 1777 /tmp/.X11-unix
+RUN /opt/openinspect/python/bin/python /tmp/openinspect-image/packages/sandbox-images/verify/smoke_test.py install
+# Mirrors runtime_environment(targets.json vps); a test keeps them equal. Set after the installs so they keep the root environment.
+ENV HOME=/home/sandbox \
+    XDG_CONFIG_HOME=/home/sandbox/.config \
+    NODE_ENV=development \
+    PYTHONPATH=/app \
+    NODE_PATH=/opt/openinspect/tools/node_modules:/home/sandbox/.npm-global/lib/node_modules:/usr/lib/node_modules:/usr/local/lib/node_modules \
+    PATH=/opt/openinspect/python/bin:/opt/openinspect/node/bin:/opt/openinspect/tools/node_modules/.bin:/home/sandbox/.venv/bin:/home/sandbox/.local/bin:/home/sandbox/.local/share/pnpm:/home/sandbox/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/home/sandbox/.npm-global/bin \
+    npm_config_prefix=/home/sandbox/.npm-global \
+    npm_config_cache=/home/sandbox/.npm-cache \
+    PNPM_HOME=/home/sandbox/.local/share/pnpm \
+    OPENINSPECT_BIN_INSTALL_DIR=/home/sandbox/.local/bin \
+    OI_SCM_CRED_CACHE_DIR=/home/sandbox/.cache/openinspect/scm
+WORKDIR /workspace
+USER 1000:1000
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/openinspect-entrypoint"]
+CMD ["/opt/openinspect/python/bin/python", "-m", "sandbox_runtime.entrypoint"]

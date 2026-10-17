@@ -9,6 +9,7 @@ import {
   SecretsCapExceededError,
   SecretsValidationError,
   validateKey,
+  validateKeyForDelete,
   validateValue,
   MAX_VALUE_SIZE,
   MAX_KEY_LENGTH,
@@ -27,8 +28,13 @@ describe("normalizeKey", () => {
 describe("validateKey", () => {
   it("accepts valid keys", () => {
     expect(() => validateKey("FOO")).not.toThrow();
-    expect(() => validateKey("_PRIVATE")).not.toThrow();
     expect(() => validateKey("A1")).not.toThrow();
+    expect(() => validateKey("foo_bar")).not.toThrow();
+  });
+
+  it("accepts keys up to the runtime's length, and refuses one more", () => {
+    expect(() => validateKey("A".repeat(MAX_KEY_LENGTH))).not.toThrow();
+    expect(() => validateKey("A".repeat(MAX_KEY_LENGTH + 1))).toThrow(SecretsValidationError);
   });
 
   it("rejects empty keys", () => {
@@ -39,8 +45,30 @@ describe("validateKey", () => {
     expect(() => validateKey("A".repeat(MAX_KEY_LENGTH + 1))).toThrow(SecretsValidationError);
   });
 
-  it("rejects keys starting with a digit", () => {
+  it("rejects keys starting with a digit or an underscore, as the runtime does", () => {
     expect(() => validateKey("1BAD")).toThrow(SecretsValidationError);
+    expect(() => validateKey("_PRIVATE")).toThrow(SecretsValidationError);
+  });
+
+  it("rejects the keys the runtime refuses in a session context, at save", () => {
+    // The executor's RESERVED_ENV_KEYS, which the runtime's RESERVED_SESSION_ENV_KEYS mirrors.
+    const runtimeReserved = [
+      "OI_DEFERRED_START",
+      "IMAGE_BUILD_MODE",
+      "RESTORED_FROM_SNAPSHOT",
+      "FROM_REPO_IMAGE",
+      "REPO_IMAGE_SHA",
+      "OPENINSPECT_BOOT_MODE",
+      "OPENINSPECT_DOCKER_ENABLED",
+      "EXPECTED_TUNNEL_PORTS",
+      "HOME",
+      "PATH",
+      "PYTHONPATH",
+    ];
+    for (const key of runtimeReserved) {
+      expect(() => validateKey(key), key).toThrow(SecretsValidationError);
+    }
+    expect(() => validateKey("image_build_mode")).toThrow(SecretsValidationError);
   });
 
   it("rejects keys with special characters", () => {
@@ -54,6 +82,27 @@ describe("validateKey", () => {
 
   it("rejects reserved keys case-insensitively", () => {
     expect(() => validateKey("path")).toThrow(SecretsValidationError);
+  });
+});
+
+describe("validateKeyForDelete", () => {
+  it("accepts the key shapes and lengths the pre-strict save rule stored", () => {
+    for (const key of ["_LEGACY", "foo_bar", "PYTHONPATH", "PATH", "A".repeat(256)]) {
+      expect(() => validateKeyForDelete(key), key).not.toThrow();
+    }
+  });
+
+  it("still refuses shapes no stored row can have", () => {
+    expect(() => validateKeyForDelete("")).toThrow(SecretsValidationError);
+    expect(() => validateKeyForDelete("A".repeat(257))).toThrow(SecretsValidationError);
+    expect(() => validateKeyForDelete("1BAD")).toThrow(SecretsValidationError);
+    expect(() => validateKeyForDelete("FOO-BAR")).toThrow(SecretsValidationError);
+  });
+
+  it("leaves the save rule strict for the keys delete accepts", () => {
+    for (const key of ["_LEGACY", "PYTHONPATH", "PATH", "A".repeat(129)]) {
+      expect(() => validateKey(key), key).toThrow(SecretsValidationError);
+    }
   });
 });
 

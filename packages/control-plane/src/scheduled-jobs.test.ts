@@ -112,6 +112,22 @@ describe("SCHEDULED_JOBS", () => {
     expect(checkAutofixQueueHealth).toHaveBeenCalledWith(deps.env, deps.log);
   });
 
+  it("reconciles VPS admission leases on the every-minute tick only when the VPS executor is the backend", async () => {
+    const vps = fakeDeps();
+    await findScheduledJob(SCHEDULER_TICK_CRON)!.run(
+      { ...vps, env: { SANDBOX_PROVIDER: "vps" } as unknown as Env },
+      1_000
+    );
+    expect(vps.submitted.map((entry) => entry.name)).toEqual([
+      "autofix_queue_health",
+      "vps_admission_reconcile",
+    ]);
+
+    const modal = fakeDeps();
+    await findScheduledJob(SCHEDULER_TICK_CRON)!.run(modal, 1_000);
+    expect(modal.submitted.map((entry) => entry.name)).toEqual(["autofix_queue_health"]);
+  });
+
   it("runs the image-build scheduler with the run's correlation", async () => {
     const deps = fakeDeps();
 

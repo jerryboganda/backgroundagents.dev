@@ -182,6 +182,27 @@ def test_rfb_wait_rejects_a_server_that_does_not_speak_rfb():
             stopped.set()
 
 
+def test_mount_details_reads_the_topmost_mount(monkeypatch):
+    mountinfo = (
+        "36 35 0:31 / / ro,relatime shared:1 - overlay overlay ro,lowerdir=/x\n"
+        "40 36 0:44 / /tmp rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=1024k\n"
+        "41 36 0:45 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=262144k\n"
+    )
+    monkeypatch.setattr(Path, "read_text", Mock(return_value=mountinfo))
+    assert verification["mount_details"]("/") == (
+        "overlay",
+        ["ro", "relatime"],
+        ["ro", "lowerdir=/x"],
+    )
+    assert verification["mount_details"]("/tmp") == (
+        "tmpfs",
+        ["rw", "nosuid", "nodev", "relatime"],
+        ["rw", "size=262144k"],
+    )
+    with pytest.raises(RuntimeError, match="is not a mount point"):
+        verification["mount_details"]("/workspace")
+
+
 def test_rfb_wait_stops_when_a_desktop_process_exits():
     exited = Mock()
     exited.poll.return_value = 1
@@ -209,3 +230,38 @@ def test_rfb_wait_stops_when_a_desktop_process_exits_while_waiting_for_the_banne
                 )
         finally:
             stopped.set()
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        ".local/share/opencode/auth.json",
+        ".local/share/opencode/opencode.db-wal",
+        ".local/share/opencode/storage/session.json",
+        ".config/opencode/auth.json",
+        ".codex/auth.json",
+        ".ssh/id_ed25519",
+        ".netrc",
+        ".cache/openinspect/scm/token",
+        ".cache/unlisted/entry",
+    ],
+)
+def test_seed_refuses_session_auth_and_unlisted_cache(tmp_path, entry):
+    (tmp_path / entry).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / entry).write_text("x")
+    with pytest.raises(RuntimeError, match="seed"):
+        verification["check_seed_entries"](tmp_path)
+
+
+def test_seed_admits_build_output_and_catalog_cache(tmp_path):
+    for entry in (
+        ".bashrc",
+        ".config/opencode/opencode.json",
+        ".cache/opencode/models.json",
+        ".local/bin/tool",
+        ".npm-cache/_cacache/index",
+    ):
+        (tmp_path / entry).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / entry).write_text("x")
+    (tmp_path / ".cache/openinspect/scm").mkdir(parents=True)
+    verification["check_seed_entries"](tmp_path)

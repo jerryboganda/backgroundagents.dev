@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   AdmissionError,
   admissionSignature,
+  MAX_LEASE_LIFETIME_MS,
   parseAdmissionLease,
   type AdmissionFailure,
 } from "../src/admission.ts";
@@ -94,6 +95,11 @@ describe("parseAdmissionLease", () => {
   it("rejects leases that are expired or expire right now", () => {
     assertFailure(signed("lease-1", NOW - 1), "expired");
     assertFailure(signed("lease-1", NOW), "expired");
+  });
+
+  it("refuses a lease that would run longer than the lifetime bound", () => {
+    assert.ok(parseAdmissionLease(signed("lease-1", NOW + MAX_LEASE_LIFETIME_MS), CHECK));
+    assertFailure(signed("lease-1", NOW + MAX_LEASE_LIFETIME_MS + 1), "invalid");
   });
 
   it("signs the canonical payload to the pinned vector the control plane also asserts", () => {

@@ -110,6 +110,9 @@ export class EnvironmentSecretsStore {
    * fold at spawn/build time (PR-6) since measuring it here would require
    * decrypting the copied ciphertext.
    *
+   * Every name, explicit or imported, must pass the strict save rule first; one
+   * failing name rejects the whole import before any write.
+   *
    * @param sourceRepoId repo_id of a repo the caller has already verified to be
    *   a current member of the environment (authorization is a route concern).
    */
@@ -135,6 +138,8 @@ export class EnvironmentSecretsStore {
       .all<{ key: string; encrypted_value: string }>();
     const rows = source.results || [];
     if (rows.length === 0) return { created: 0, updated: 0, keys: [] };
+    // Legacy repo rows can predate the strict save rule: reject the import before any write.
+    rows.forEach((row) => validateKey(normalizeKey(row.key)));
 
     const existingKeySet = await this.existingKeys(environmentId);
     assertScopeKeyCapacity(

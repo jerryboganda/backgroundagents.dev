@@ -1,9 +1,17 @@
-const VALID_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-export const MAX_KEY_LENGTH = 256;
+/**
+ * The runtime's env-key rule (executor session-context.ts, sandbox runtime session_context_start.py). A key outside it
+ * fails every boot of its session, so it is refused here, at save. Keys are saved uppercase, so this is checked on that form.
+ */
+const VALID_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
+export const MAX_KEY_LENGTH = 128;
 export const MAX_VALUE_SIZE = 16384;
 export const MAX_TOTAL_VALUE_SIZE = 65536;
 export const MAX_SECRETS_PER_SCOPE = 50;
 
+/**
+ * Platform keys, plus the keys the runtime refuses in a session context (the boot-mode and tunnel controls). A secret
+ * that names one would make the executor or the runtime refuse every boot of that repo.
+ */
 const RESERVED_KEYS = new Set([
   "PYTHONUNBUFFERED",
   "SANDBOX_ID",
@@ -22,6 +30,14 @@ const RESERVED_KEYS = new Set([
   "TERM",
   "PWD",
   "LANG",
+  "OI_DEFERRED_START",
+  "IMAGE_BUILD_MODE",
+  "FROM_REPO_IMAGE",
+  "REPO_IMAGE_SHA",
+  "OPENINSPECT_BOOT_MODE",
+  "OPENINSPECT_DOCKER_ENABLED",
+  "EXPECTED_TUNNEL_PORTS",
+  "PYTHONPATH",
 ]);
 
 export class SecretsValidationError extends Error {}
@@ -39,10 +55,28 @@ export function normalizeKey(key: string): string {
 export function validateKey(key: string): void {
   if (!key || key.length > MAX_KEY_LENGTH)
     throw new SecretsValidationError("Key too long or empty");
-  if (!VALID_KEY_PATTERN.test(key))
-    throw new SecretsValidationError("Key must match [A-Za-z_][A-Za-z0-9_]*");
-  if (RESERVED_KEYS.has(key.toUpperCase()))
-    throw new SecretsValidationError(`Key '${key}' is reserved`);
+  const normalized = normalizeKey(key);
+  if (!VALID_KEY_PATTERN.test(normalized))
+    throw new SecretsValidationError(
+      "Key must start with a letter and use only letters, digits, and underscores"
+    );
+  if (RESERVED_KEYS.has(normalized)) throw new SecretsValidationError(`Key '${key}' is reserved`);
+}
+
+/**
+ * Delete accepts the key shape and length the pre-strict save rule stored, so a legacy row stays removable. Reserved
+ * names are not checked: a row stored before a name was reserved must still be removable.
+ */
+const LEGACY_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const LEGACY_MAX_KEY_LENGTH = 256;
+
+export function validateKeyForDelete(key: string): void {
+  if (!key || key.length > LEGACY_MAX_KEY_LENGTH)
+    throw new SecretsValidationError("Key too long or empty");
+  if (!LEGACY_KEY_PATTERN.test(key))
+    throw new SecretsValidationError(
+      "Key must start with a letter or underscore and use only letters, digits, and underscores"
+    );
 }
 
 export function validateValue(value: unknown): asserts value is string {

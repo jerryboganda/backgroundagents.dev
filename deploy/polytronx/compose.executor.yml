@@ -6,12 +6,12 @@
 #   executor.env secret file in POLYTRONX_SECRETS_DIR. No secret value is in this file.
 # - The sandboxes are not defined here. The executor starts each one with
 #   `docker run --runtime runsc` and the limits set below. None of them gets the Docker
-#   socket or a published port.
+#   socket or a published port. Each gets one workspace slot as /workspace (workspace-slots.sh).
 # - The Docker socket is root-equivalent on this host, so this is the only container that
 #   mounts it. The service runs as uid 1000 with the engine's docker group added, a read-only
 #   root filesystem, all capabilities dropped, and no-new-privileges.
-# - The port is published on EXECUTOR_BIND_ADDRESS only. Docker publishes past ufw's INPUT
-#   rules, so the DOCKER-USER allowlist in runbooks/executor-host.md limits the source.
+# - The port is published on 127.0.0.1 only, so only the host's private HTTPS edge reaches it
+#   (runbooks/private-edge.md). Docker publishes past ufw's INPUT rules, so loopback is the control.
 #
 # DOCKER_GID is the group of the engine socket. The deploy and preflight scripts export it.
 # Required values fail the render when unset (${NAME:?...}). Render check, which reads no secret:
@@ -39,16 +39,32 @@ services:
       # Listens on every address inside the container. The published port below is the only way in.
       VPS_EXECUTOR_HOST: 0.0.0.0
       VPS_EXECUTOR_PORT: "8787"
-      VPS_EXECUTOR_STATE_FILE: /var/lib/vps-executor/executor-state.json
+      # Compose state: one SQLite file in the executor-state volume. Nothing evicts workspace data on a timer.
+      VPS_EXECUTOR_STATE_FILE: /var/lib/vps-executor/executor-state.db
+      # Trusted control plane, https. Required: the executor refuses to start without it.
+      VPS_EXECUTOR_CONTROL_PLANE_URL: ${VPS_EXECUTOR_CONTROL_PLANE_URL:?VPS_EXECUTOR_CONTROL_PLANE_URL must name the trusted https control-plane URL in executor-release.env}
       VPS_EXECUTOR_IMAGE: ${EXECUTOR_SANDBOX_IMAGE:?EXECUTOR_SANDBOX_IMAGE must name the sandbox image by digest in executor-release.env}
       VPS_EXECUTOR_SANDBOX_CPUS: ${EXECUTOR_SANDBOX_CPUS:?EXECUTOR_SANDBOX_CPUS must set the CPU limit of each sandbox}
       VPS_EXECUTOR_SANDBOX_MEMORY: ${EXECUTOR_SANDBOX_MEMORY:?EXECUTOR_SANDBOX_MEMORY must set the memory limit of each sandbox}
+      # Six 10 GiB slots, provisioned by workspace-slots.sh. The count is fixed here, not a setting:
+      # the provisioned images and the executor must agree on it.
+      VPS_EXECUTOR_WORKSPACE_ROOT: /srv/vps-ws/slots
+      VPS_EXECUTOR_WORKSPACE_SLOTS: "6"
     ports:
-      - "${EXECUTOR_BIND_ADDRESS:?EXECUTOR_BIND_ADDRESS must name one address of this host}:8787:8787"
+      - "127.0.0.1:8787:8787"
     volumes:
       - executor-state:/var/lib/vps-executor
       # Read by the executor to start sandboxes through the engine. Only this service mounts it.
       - /var/run/docker.sock:/var/run/docker.sock
+      # The slot root, at the same path inside and outside, so the bind source the executor checks is
+      # the one dockerd binds. Private propagation: only slots mounted before this container starts
+      # appear here. create_host_path: a missing root stops the start instead of being created.
+      - type: bind
+        source: /srv/vps-ws/slots
+        target: /srv/vps-ws/slots
+        bind:
+          propagation: rprivate
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp

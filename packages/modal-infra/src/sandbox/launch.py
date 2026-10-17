@@ -24,6 +24,7 @@ from sandbox_runtime.types import SandboxStatus
 from ..app import app
 from ..app_config import APP_NAME
 from ..images.base import base_image
+from .capacity import read_max_active_sandboxes
 from .launch_policy import (
     docker_allocation_name,
     docker_allocation_tags,
@@ -129,6 +130,8 @@ class SandboxLauncher:
 
     async def launch(self, spec: SandboxLaunchSpec) -> SandboxHandle:
         """Launch a Modal sandbox from a normalized create or restore specification."""
+        # Invalid cap settings fail closed before any launch work.
+        read_max_active_sandboxes()
         config = spec.config
         has_repository = bool(config.repo_owner)
         sandbox_id = config.sandbox_id

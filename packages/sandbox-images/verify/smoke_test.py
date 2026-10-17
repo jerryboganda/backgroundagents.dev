@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pwd
 import re
 import signal
 import socket
@@ -16,6 +15,11 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+try:
+    import pwd
+except ImportError:  # Windows: only the Linux image runs the probes that need pwd
+    pwd = None
 
 PNPM_GLOBAL_PROBE = r"""
 import json, os, pathlib, shutil, subprocess, tempfile, uuid
@@ -354,15 +358,157 @@ def inspect_image(plan: dict[str, Any], tools: dict[str, Any], *, services: bool
             Path("/tmp/openinspect-image-verify.png").unlink(missing_ok=True)
 
 
+def mount_details(mount_point: str) -> tuple[str, list[str], list[str]]:
+    """Filesystem type, per-mount options and superblock options of the topmost mount at a path."""
+    matches = []
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        before, after = line.split(" - ", 1)
+        fields = before.split()
+        if fields[4] == mount_point:
+            fstype, _source, superblock = after.split(maxsplit=2)
+            matches.append((fstype, fields[5].split(","), superblock.split(",")))
+    if not matches:
+        raise RuntimeError(f"{mount_point} is not a mount point")
+    return matches[-1]
+
+
+# Session and auth state the seed must never hold. The build writes OpenCode's model catalog and the empty SCM
+# cache directory under .cache, so nothing else may appear there. Other OpenCode output is not validated here;
+# the first Linux build runs this contract on the real seed.
+SEED_SESSION_PATHS = (
+    ".codex",
+    ".claude",
+    ".config/gh",
+    ".ssh",
+    ".netrc",
+    ".npmrc",
+    ".git-credentials",
+    ".local/share/opencode/storage",
+    ".local/share/opencode/snapshot",
+)
+SEED_CACHE_ROOTS = (".cache/opencode", ".cache/openinspect/scm")
+
+
+def check_seed_entries(seed: Path) -> None:
+    for entry in seed.rglob("*"):
+        relative = entry.relative_to(seed).as_posix()
+        if (
+            entry.name == "auth.json"
+            or entry.name.startswith("opencode.db")
+            or any(
+                relative == path or relative.startswith(f"{path}/") for path in SEED_SESSION_PATHS
+            )
+        ):
+            raise RuntimeError(f"Home seed carries session or auth state: {relative}")
+        if relative.startswith(".cache/openinspect/") and entry.is_file():
+            raise RuntimeError(f"Home seed carries session state: {relative}")
+        if relative.startswith(".cache/") and not any(
+            relative == root or relative.startswith(f"{root}/") or root.startswith(f"{relative}/")
+            for root in SEED_CACHE_ROOTS
+        ):
+            raise RuntimeError(f"Home seed cache is not OpenCode catalog or SCM cache: {relative}")
+
+
+def check_runtime_contract(plan: dict[str, Any]) -> None:
+    """Run as the runtime user on a read-only root, with an exec tmpfs /tmp and bind-mounted HOME and /workspace."""
+    from sandbox_runtime.claude_stager import resolve_claude_config_dir
+    from sandbox_runtime.codex_stager import resolve_codex_config_dir
+    from sandbox_runtime.harness.base import HarnessId
+    from sandbox_runtime.opencode_server import resolve_opencode_global_config_dir
+
+    target = plan["target"]
+    if (os.getuid(), os.getgid()) != (target["uid"], target["gid"]):
+        raise RuntimeError(
+            f"Runtime identity is {os.getuid()}:{os.getgid()}, expected {target['uid']}:{target['gid']}"
+        )
+    if pwd.getpwuid(os.getuid()).pw_name != target["user"]:
+        raise RuntimeError("Runtime user name does not match the image contract")
+    _, root_options, _ = mount_details("/")
+    if "ro" not in root_options:
+        raise RuntimeError("Root filesystem is writable; the contract requires a read-only root")
+    fstype, options, superblock = mount_details("/tmp")
+    if (
+        fstype != "tmpfs"
+        or "noexec" in options
+        or not any(item.startswith("size=") for item in superblock)
+    ):
+        raise RuntimeError("/tmp must be an exec tmpfs with a size bound")
+    directory = Path(tempfile.mkdtemp(dir="/tmp"))
+    probe = directory / "exec-probe"
+    try:
+        probe.write_text("#!/bin/sh\nexit 0\n")
+        probe.chmod(0o755)
+        subprocess.run([str(probe)], check=True, timeout=10)
+    finally:
+        probe.unlink(missing_ok=True)
+        directory.rmdir()
+    home = Path(target["home"])
+    for path in (home, Path("/workspace")):
+        if not path.is_mount():
+            raise RuntimeError(f"{path} must be a bind mount")
+        with tempfile.TemporaryFile(dir=path):
+            pass
+    seed = Path("/app/home-seed")
+    if not seed.is_dir():
+        raise RuntimeError("Image home seed /app/home-seed is missing")
+    for entry in seed.rglob("*"):
+        copied = home / entry.relative_to(seed)
+        if not (copied.exists() or copied.is_symlink()):
+            raise RuntimeError(
+                f"Home seed entry was not copied into HOME: {entry.relative_to(seed)}"
+            )
+        if not (entry.is_symlink() or os.access(entry, os.R_OK)):
+            raise RuntimeError(
+                f"Home seed entry is not readable by UID {os.getuid()}: {entry.relative_to(seed)}"
+            )
+    for required in (
+        ".agent-browser/config.json",
+        ".config/opencode",
+        ".npm-cache",
+        ".npm-global",
+        ".local/bin",
+        ".cache/openinspect/scm",
+    ):
+        if not (home / required).exists():
+            raise RuntimeError(f"Required home path is missing: {required}")
+    check_seed_entries(seed)
+    resolvers = {
+        "opencode": resolve_opencode_global_config_dir,
+        "claude": resolve_claude_config_dir,
+        "codex": resolve_codex_config_dir,
+    }
+    if set(resolvers) != set(HarnessId):
+        raise RuntimeError("Harness contract does not cover every runtime harness")
+    for resolve in resolvers.values():
+        config_dir = resolve()
+        config_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=config_dir):
+            pass
+    opencode = Path("/tmp/opencode")
+    if not opencode.is_dir() or opencode.stat().st_uid != os.getuid():
+        raise RuntimeError("/tmp/opencode must be a directory owned by the runtime user")
+    with tempfile.TemporaryFile(dir=opencode):
+        pass
+    # Harness processes start under the same contract: OpenCode serves from the seeded config, Codex probes.
+    harness_probe = Probe(plan)
+    harness_probe.run(["python3", "-m", "sandbox_runtime.harness.codex.probe"], timeout_seconds=30)
+    harness_probe.service(
+        ["opencode", "serve", "--hostname", "127.0.0.1", "--port", "{port}"], "/global/health"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("install", "verify"))
+    parser.add_argument("command", choices=("install", "verify", "contract"))
     args = parser.parse_args()
     plan = json.loads(Path("/app/openinspect-build-config.json").read_text())
     tools = json.loads(Path("/app/openinspect-toolchain.json").read_text())
     environment = json.loads(Path("/app/openinspect-runtime-environment.json").read_text())
     if environment != plan["runtimeEnv"]:
         raise RuntimeError("Baked launch environment does not match build configuration")
+    if args.command == "contract":
+        check_runtime_contract(plan)
+        return
     inspect_image(plan, tools, services=args.command == "verify")
 
 

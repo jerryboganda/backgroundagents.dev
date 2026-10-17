@@ -46,12 +46,27 @@ jobs:
           # anchors every alternative, so a nested .gitignore is refused.
           # Modal paths are the reviewed Modal v1 overlay; update this list with it.
           # packages/vps-executor/ is the executor overlay: a package upstream does not have.
-          allowed='^(deploy/polytronx/|\.github/workflows/polytronx-openinspect\.yml$|packages/web/Dockerfile(\.dockerignore)?$|packages/vps-executor/|scripts/bootstrap-node-owner(\.test)?\.ts$|scripts/tsconfig\.bootstrap\.json$|packages/modal-infra/src/sandbox/(build_session|capacity|launch)\.py$|packages/modal-infra/src/web_api\.py$|packages/modal-infra/tests/test_sandbox_capacity\.py$|\.gitignore$)'
+          # The executor's files outside its package (control plane, shared types, migration, lockfile), and the other control-plane files the overlay changes, are listed one by one.
+          # The root .env.example task template and the root .gitattributes are admitted by exact name only.
+          # The sandbox image and runtime files are listed by exact path, as is the sandbox-images workflow. The 0090 migration, the web secrets editor files, and the secrets-validation and sandbox-env files are listed by exact path too. The control-plane secrets routes and their tests (team, environment and global) are listed by exact path as well, and so are the environment secrets store and its test.
+          allowed='^(deploy/polytronx/|\.github/workflows/polytronx-openinspect\.yml$|packages/web/Dockerfile(\.dockerignore)?$|packages/web/src/components/secrets-editor\.tsx$|packages/web/src/components/secrets-editor\.test\.ts$|packages/vps-executor/|scripts/bootstrap-node-owner(\.test)?\.ts$|scripts/tsconfig\.bootstrap\.json$|packages/modal-infra/src/sandbox/(build_session|capacity|launch)\.py$|packages/modal-infra/src/web_api\.py$|packages/modal-infra/tests/test_sandbox_capacity\.py$|packages/control-plane/src/(node/config|types)\.ts$|packages/control-plane/src/sandbox/(provider|provider-factory|provider-factory\.test)\.ts$|packages/control-plane/src/sandbox/lifecycle/(manager|vm-startup-reconciliation)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations|manager-admission)\.test\.ts$|packages/control-plane/src/sandbox/providers/vps-provider(\.test)?\.ts$|packages/control-plane/src/sandbox/providers/pending-vm-reference\.ts$|packages/control-plane/src/sandbox/admission/vps-reconcile(\.test)?\.ts$|packages/control-plane/src/db/secrets-validation(\.test)?\.ts$|packages/control-plane/src/sandbox/sandbox-env\.ts$|packages/control-plane/src/scheduled-jobs(\.test)?\.ts$|packages/control-plane/src/session/components(-admission\.test)?\.ts$|packages/control-plane/src/session/sandbox-shutdown(\.test)?\.ts$|packages/control-plane/test/integration/cleanup\.ts$|packages/control-plane/src/db/environment-secrets(\.test)?\.ts$|packages/control-plane/src/db/team-secrets\.ts$|packages/control-plane/src/routes/environment-secrets\.ts$|packages/control-plane/src/routes/secrets\.ts$|packages/control-plane/src/routes/secrets\.repository-grants\.test\.ts$|packages/control-plane/test/integration/environments-routes\.test\.ts$|packages/control-plane/test/integration/global-secrets\.test\.ts$|packages/control-plane/test/integration/team-secrets-routes\.test\.ts$|packages/shared/src/types/integrations\.ts$|terraform/d1/migrations/0089_sandbox_admission_reservations\.sql$|terraform/d1/migrations/0090_sandbox_admission_relinquished\.sql$|package-lock\.json$|\.gitignore$|\.env\.example$|\.gitattributes$|\.github/workflows/sandbox-images\.yml$|packages/sandbox-images/(Dockerfile\.vps|README\.md|targets\.json|install/filesystem\.sh|vps/entrypoint\.sh|src/sandbox_images/(bundle|native)\.py|tests/(test_bundle|test_verification|test_vps_seed)\.py|verify/smoke_test\.py)$|packages/sandbox-runtime/(src/sandbox_runtime/(entrypoint|session_context_start)\.py|tests/test_session_context_start\.py)$)'
           changed="$(git diff --name-only --no-renames "$pin" HEAD)"
+          # Credential paths are refused before the broad prefixes above can admit them: nested
+          # .env and .env.* files (the root .env.example task template is the exception, by exact
+          # name), the operator's secret env files, private keys, auth stores, token files,
+          # Terraform state and variables, and secrets or credential directories.
+          credential='(^|/)(\.env|\.dev\.vars)[^/]*(/|$)|(^|/)(control-plane|web|storage|executor)\.env$|(^|/)[^/]*\.(pem|key|p12|pfx|jks|keystore)$|(^|/)id_(rsa|dsa|ecdsa|ed25519)[^/]*$|(^|/)\.?(auth|credentials)\.json$|(^|/)\.(npmrc|netrc|pypirc)$|(^|/)[^/]*git-credentials$|(^|/)[^/]*-token\.txt$|(^|/)[^/]*\.tfstate([.][^/]*)?$|(^|/)[^/]*\.tfvars$|(^|/)(secrets?|\.ssh|\.aws)(/|$)'
+          credential_hits="$(grep -E "$credential" <<<"$changed" | grep -vxF '.env.example' || true)"
           outside="$(grep -Ev "$allowed" <<<"$changed" || true)"
+          if [ -n "$credential_hits" ]; then
+            echo "credential paths differ from the upstream pin; refused whatever the overlay allows:"
+            echo "$credential_hits"
+          fi
           if [ -n "$outside" ]; then
             echo "paths differ from the upstream pin outside the overlay:"
             echo "$outside"
+          fi
+          if [ -n "$credential_hits$outside" ]; then
             exit 1
           fi
           echo "upstream pin ${pin:0:12} intact; $(grep -c . <<<"$changed" || true) overlay path(s) differ"
@@ -198,10 +213,13 @@ jobs:
           : >"$work/secrets/web.env"
           : >"$work/secrets/storage.env"
           : >"$work/secrets/executor.env"
+          # A public test certificate, copied so the mount has a file. It is never a key.
+          cp deploy/polytronx/testdata/executor-edge-ca.crt "$work/executor-edge-ca.crt"
           cat >"$work/release.env" <<EOF
           CONTROL_PLANE_IMAGE=open-inspect-control-plane:render-check
           WEB_IMAGE=open-inspect-web:render-check
           POLYTRONX_SECRETS_DIR=$work/secrets
+          POLYTRONX_EXECUTOR_CA_FILE=$work/executor-edge-ca.crt
           POLYTRONX_SOURCE_DIR=$GITHUB_WORKSPACE
           POLYTRONX_EDGE_NETWORK=polytronx-edge
           CONTROL_PLANE_LOOPBACK_PORT=18787
@@ -226,6 +244,18 @@ jobs:
             exit 1
           fi
           echo "fail-closed: a missing CONTROL_PLANE_IMAGE stops the render"
+          grep -v '^POLYTRONX_EXECUTOR_CA_FILE=' "$work/release.env" >"$work/release-no-ca.env"
+          if docker compose -p polytronx-openinspect --env-file "$work/release-no-ca.env" \
+            -f deploy/polytronx/compose.production.yml config --quiet 2>"$work/ca-err.txt"; then
+            echo "compose rendered without POLYTRONX_EXECUTOR_CA_FILE; the executor CA would not be required"
+            exit 1
+          fi
+          if ! grep -q 'POLYTRONX_EXECUTOR_CA_FILE must name' "$work/ca-err.txt"; then
+            echo "render failed for another reason:"
+            cat "$work/ca-err.txt"
+            exit 1
+          fi
+          echo "fail-closed: a missing POLYTRONX_EXECUTOR_CA_FILE stops the render"
 
       - name: Check the rendered configuration
         # Ports, networks and aliases as compose resolved them: the production loopback
@@ -241,18 +271,30 @@ jobs:
             config --format json >"$work/rehearsal.json"
           node deploy/polytronx/rendered-config.mjs production "$work/production.json"
           node deploy/polytronx/rendered-config.mjs rehearsal "$work/rehearsal.json"
+          # The control plane mounts the executor CA once, read-only, from the public certificate.
+          node -e '
+            const config = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const mounts = (config.services.app.volumes ?? []).filter((v) => v.target === "/etc/polytronx/executor-ca/ca.crt");
+            const [ca] = mounts;
+            if (mounts.length !== 1 || ca.type !== "bind" || ca.read_only !== true || !String(ca.source).endsWith("/executor-edge-ca.crt")) {
+              console.error("the control plane must mount the executor CA once, as a read-only bind of the public certificate");
+              process.exit(1);
+            }
+            console.log("control plane: the executor CA is one read-only bind of the public certificate");
+          ' "$work/production.json"
 
-      - name: Render the executor stack, fail closed without its address, and check it
+      - name: Render the executor stack, fail closed without its control-plane URL, and check it
         # Placeholders only: nothing here starts a container or reads a secret value. The checks
-        # read back what compose.executor.yml sets: one published port on the executor's address,
-        # a non-root user, a read-only root filesystem, dropped capabilities and limits.
+        # read back what compose.executor.yml sets: one published port on loopback, six slots, the
+        # state file, the control-plane URL, a non-root user, a read-only root filesystem, dropped
+        # capabilities and limits. The control-plane URL is a fixture on the reserved .invalid TLD.
         run: |
           set -euo pipefail
           work="$RUNNER_TEMP/render"
           cat >"$work/executor-release.env" <<EOF
           EXECUTOR_IMAGE=open-inspect-vps-executor:render-check
           POLYTRONX_SECRETS_DIR=$work/secrets
-          EXECUTOR_BIND_ADDRESS=10.0.0.2
+          VPS_EXECUTOR_CONTROL_PLANE_URL=https://render-check.invalid
           DOCKER_GID=999
           EXECUTOR_SANDBOX_IMAGE=busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000
           EXECUTOR_SANDBOX_CPUS=2
@@ -265,31 +307,36 @@ jobs:
             const service = config.services["vps-executor"];
             const problems = [];
             const ports = service.ports ?? [];
-            if (ports.length !== 1 || ports[0].host_ip !== "10.0.0.2" || String(ports[0].published) !== "8787")
-              problems.push("the executor must publish one port, on EXECUTOR_BIND_ADDRESS only");
+            if (ports.length !== 1 || ports[0].host_ip !== "127.0.0.1" || String(ports[0].published) !== "8787")
+              problems.push("the executor must publish one port, on 127.0.0.1 only");
             if (!service.read_only) problems.push("the root filesystem is not read-only");
             if (!(service.cap_drop ?? []).includes("ALL")) problems.push("cap_drop does not drop ALL");
             if (!/^[1-9][0-9]*(:|$)/.test(String(service.user ?? ""))) problems.push("the executor does not run as a non-root numeric user");
             if (service.privileged) problems.push("privileged is set");
+            const env = service.environment ?? {};
+            if (env.VPS_EXECUTOR_WORKSPACE_SLOTS !== "6") problems.push("the executor does not have six workspace slots");
+            if (!String(env.VPS_EXECUTOR_STATE_FILE ?? "").endsWith("/executor-state.db")) problems.push("the state file is not executor-state.db");
+            if ("VPS_EXECUTOR_WORKSPACE_TTL_HOURS" in env) problems.push("a workspace TTL is set; the TTL was removed");
+            if (!env.VPS_EXECUTOR_CONTROL_PLANE_URL) problems.push("the control-plane URL is not set");
             if (!service.mem_limit || !service.cpus || !service.pids_limit) problems.push("a CPU, memory or pids limit is missing");
             if (problems.length > 0) {
               console.error(problems.join("\n"));
               process.exit(1);
             }
-            console.log("executor: one published port on its address, non-root, read-only, no capabilities, limits set");
+            console.log("executor: loopback port, six slots, state file, control-plane URL, non-root, read-only, no capabilities, limits set");
           ' "$work/executor.json"
-          grep -v '^EXECUTOR_BIND_ADDRESS=' "$work/executor-release.env" >"$work/executor-no-bind.env"
-          if docker compose -p polytronx-executor --env-file "$work/executor-no-bind.env" \
+          grep -v '^VPS_EXECUTOR_CONTROL_PLANE_URL=' "$work/executor-release.env" >"$work/executor-no-url.env"
+          if docker compose -p polytronx-executor --env-file "$work/executor-no-url.env" \
             -f deploy/polytronx/compose.executor.yml config --quiet 2>"$work/exec-err.txt"; then
-            echo "compose rendered without EXECUTOR_BIND_ADDRESS; the executor would not fail closed"
+            echo "compose rendered without VPS_EXECUTOR_CONTROL_PLANE_URL; the executor would not fail closed"
             exit 1
           fi
-          grep -q 'EXECUTOR_BIND_ADDRESS must name' "$work/exec-err.txt" || {
+          grep -q 'VPS_EXECUTOR_CONTROL_PLANE_URL must name' "$work/exec-err.txt" || {
             echo "render failed for another reason:"
             cat "$work/exec-err.txt"
             exit 1
           }
-          echo "fail-closed: a missing EXECUTOR_BIND_ADDRESS stops the render"
+          echo "fail-closed: a missing VPS_EXECUTOR_CONTROL_PLANE_URL stops the render"
 
   images:
     name: Build, smoke and export all three images
@@ -415,6 +462,7 @@ jobs:
           docker run -d --name executor-smoke -p 127.0.0.1:18788:8787 \
             -e VPS_EXECUTOR_TOKEN="$(openssl rand -hex 32)" \
             -e VPS_EXECUTOR_ADMISSION_SECRET="$(openssl rand -hex 32)" \
+            -e VPS_EXECUTOR_CONTROL_PLANE_URL=https://render-check.invalid \
             -e VPS_EXECUTOR_HOST=0.0.0.0 \
             -e VPS_EXECUTOR_IMAGE=busybox:1.36 \
             "$image" >/dev/null

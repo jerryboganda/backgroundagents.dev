@@ -18,6 +18,11 @@ import {
 } from "./providers/opencomputer-provider";
 import { createVercelSandboxClient } from "./providers/vercel/client";
 import { createVercelProvider, type VercelSandboxProvider } from "./providers/vercel/provider";
+import {
+  createVpsProvider,
+  type VpsAdmissionLeases,
+  type VpsSandboxProvider,
+} from "./providers/vps-provider";
 import { resolveScmProviderFromEnv } from "../source-control";
 import type { Env } from "../types";
 
@@ -168,6 +173,25 @@ function createE2BProviderFromEnv(env: Env): E2BSandboxProvider {
   });
 }
 
+export function createVpsProviderFromEnv(
+  env: {
+    VPS_EXECUTOR_URL?: string;
+    VPS_EXECUTOR_TOKEN?: string;
+    VPS_EXECUTOR_ADMISSION_SECRET?: string;
+    SCM_PROVIDER?: string;
+  },
+  options: { requestTimeoutMs?: number; leases?: VpsAdmissionLeases } = {}
+): VpsSandboxProvider {
+  return createVpsProvider({
+    executorUrl: env.VPS_EXECUTOR_URL,
+    executorToken: env.VPS_EXECUTOR_TOKEN,
+    admissionSecret: env.VPS_EXECUTOR_ADMISSION_SECRET,
+    requestTimeoutMs: options.requestTimeoutMs,
+    leases: options.leases,
+    scmProvider: resolveScmProviderFromEnv(env.SCM_PROVIDER),
+  });
+}
+
 export function createSandboxProviderFromEnv(env: Env, backend: "daytona"): DaytonaSandboxProvider;
 export function createSandboxProviderFromEnv(env: Env, backend: "e2b"): E2BSandboxProvider;
 export function createSandboxProviderFromEnv(
@@ -180,6 +204,7 @@ export function createSandboxProviderFromEnv(
   backend: "opencomputer",
   options?: { requireOpenComputerTemplate?: boolean }
 ): OpenComputerSandboxProvider;
+export function createSandboxProviderFromEnv(env: Env, backend: "vps"): VpsSandboxProvider;
 export function createSandboxProviderFromEnv(
   env: Env,
   backend?: SandboxBackendName,
@@ -201,6 +226,8 @@ export function createSandboxProviderFromEnv(
       });
     case "e2b":
       return createE2BProviderFromEnv(env);
+    case "vps":
+      return createVpsProviderFromEnv(env, { leases: options.vpsLeases });
     case "modal":
     case "modal-vm":
       return createModalProviderFromEnv(env, backend);
@@ -214,6 +241,8 @@ export function createSandboxProviderFromEnv(
  */
 interface SandboxProviderFactoryOptions {
   requireOpenComputerTemplate?: boolean;
+  /** Finds the admission lease a VPS pending stop closes under. */
+  vpsLeases?: VpsAdmissionLeases;
 }
 
 function parseNumericEnv(name: string, value: string | undefined, defaultValue: number): number {

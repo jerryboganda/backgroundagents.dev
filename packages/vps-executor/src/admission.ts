@@ -9,8 +9,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * Expiry is exact, with no clock skew tolerance: a lease is refused at or after expiresAtMs. A
  * tolerance would lengthen the replay window, so keep both clocks NTP-synced.
  *
- * ponytail: a valid lease replays until it expires, so a captured lease can start its sandbox
- * again after a stop, inside the window. Single-use needs consumed tokens kept in the state file.
+ * A lease is spent by the first create it admits. The server keeps the spent token in its state
+ * file, so a replay after that create is refused there. This module only proves the lease is
+ * genuine, current, and short-lived.
  */
 
 export type AdmissionFailure = "missing" | "invalid" | "expired";
@@ -26,12 +27,16 @@ export interface SignedLeaseFields extends AdmissionLease {
   sandboxId: string;
 }
 
-/** What a lease is checked against: the secret, the request's identity, and the clock. */
-export interface AdmissionCheck {
+/** The scope a lease is signed for: the secret, and the request's session and sandbox id. */
+export interface LeaseScope {
   /** Empty fails every lease closed. */
   secret: string;
   sessionId: string;
   sandboxId: string;
+}
+
+/** What a create's lease is checked against: its scope, and the clock. */
+export interface AdmissionCheck extends LeaseScope {
   nowMs: number;
 }
 
@@ -49,6 +54,9 @@ const LEASE_TOKEN_PATTERN = /^[\x21-\x7e]{1,512}$/;
 const SIGNATURE_PATTERN = /^[0-9a-f]{64}$/;
 // Domain tag: a signature made for another purpose under the same secret never verifies here.
 const SIGNATURE_DOMAIN = "open-inspect.vps-admission.v1";
+// Longest a lease may run from the check. The control plane's lease is short (its launch window);
+// this headroom absorbs clock skew, and anything longer is refused as invalid.
+export const MAX_LEASE_LIFETIME_MS = 60_000;
 
 /** HMAC-SHA256 hex over the canonical payload. Keep in step with the control plane's vps-provider.ts. */
 export function admissionSignature(secret: string, fields: SignedLeaseFields): string {
@@ -63,11 +71,11 @@ export function admissionSignature(secret: string, fields: SignedLeaseFields): s
 }
 
 /**
- * Returns the lease when it is well-formed, signed for this session and sandbox, and not yet
- * expired. Throws AdmissionError. The signature is checked before expiry, so an unsigned lease
- * never reaches the clock check.
+ * Returns the lease when it is well-formed and signed for this scope. Expiry is not checked, so a
+ * settlement proof still settles a lapsed lease, and never creates one. Throws AdmissionError
+ * (missing or invalid).
  */
-export function parseAdmissionLease(value: unknown, check: AdmissionCheck): AdmissionLease {
+export function verifySignedLease(value: unknown, scope: LeaseScope): AdmissionLease {
   if (value === undefined || value === null) throw new AdmissionError("missing");
   if (typeof value !== "object") throw new AdmissionError("invalid");
   const { leaseToken, expiresAtMs, signature } = value as Record<string, unknown>;
@@ -78,15 +86,26 @@ export function parseAdmissionLease(value: unknown, check: AdmissionCheck): Admi
   if (typeof signature !== "string" || !SIGNATURE_PATTERN.test(signature))
     throw new AdmissionError("invalid");
   // The empty key is public knowledge, so anyone could sign with it. Refuse.
-  if (check.secret === "") throw new AdmissionError("invalid");
-  const expected = admissionSignature(check.secret, {
-    sessionId: check.sessionId,
-    sandboxId: check.sandboxId,
+  if (scope.secret === "") throw new AdmissionError("invalid");
+  const expected = admissionSignature(scope.secret, {
+    sessionId: scope.sessionId,
+    sandboxId: scope.sandboxId,
     leaseToken,
     expiresAtMs,
   });
   if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex")))
     throw new AdmissionError("invalid");
-  if (expiresAtMs <= check.nowMs) throw new AdmissionError("expired");
   return { leaseToken, expiresAtMs };
+}
+
+/**
+ * Returns the lease when it is verified, not yet expired, and within MAX_LEASE_LIFETIME_MS. Throws
+ * AdmissionError. The signature is checked before the clock, so an unsigned lease never reaches the
+ * clock checks.
+ */
+export function parseAdmissionLease(value: unknown, check: AdmissionCheck): AdmissionLease {
+  const lease = verifySignedLease(value, check);
+  if (lease.expiresAtMs <= check.nowMs) throw new AdmissionError("expired");
+  if (lease.expiresAtMs - check.nowMs > MAX_LEASE_LIFETIME_MS) throw new AdmissionError("invalid");
+  return lease;
 }

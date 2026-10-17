@@ -35,6 +35,7 @@ from .repository_boot import RepositoryBoot
 from .repository_hooks import RepositoryHooks
 from .repository_sync import RepositorySynchronizer
 from .runtime_config import RuntimeConfig
+from .session_context_start import SESSION_CONTEXT_START_ARGUMENT, run_session_context_start
 from .supervisor import SandboxSupervisor
 from .tunnel_environment import TunnelEnvironment
 from .web_terminal import WebTerminal
@@ -211,14 +212,20 @@ async def main(argv: list[str] | None = None) -> int:
         dest="await_image_build_context",
         action="store_true",
     )
+    parser.add_argument(
+        SESSION_CONTEXT_START_ARGUMENT,
+        dest="await_session_context",
+        action="store_true",
+    )
     args = parser.parse_args(argv)
 
-    # Both image-build launch protocols decide the process environment before
-    # anything reads it, so they branch ahead of build_supervisor(). The
-    # stdin-context launcher composes that environment itself and ignores the
-    # deferred marker; an unlaunched deferred sandbox composes nothing at all.
+    # The launch protocols decide the process environment before anything reads it, so they branch ahead of
+    # build_supervisor(). The stdin-context launchers compose that environment themselves and ignore the deferred
+    # marker; an unlaunched deferred sandbox composes nothing at all.
     if args.await_image_build_context:
         return await run_image_build_context_start(build_supervisor, install_signal_handlers)
+    if args.await_session_context:
+        return await run_session_context_start(build_supervisor, install_signal_handlers)
     if deferred_start_requested(os.environ):
         return await run_deferred_start()
 

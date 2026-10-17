@@ -52,6 +52,10 @@ fi
 
 load_release_file "$TARGET"
 RELEASE_FILE="$TARGET"
+# A release from before the executor CA mount has no CA line, and the compose render would fail on it.
+# The file is read, not the environment, which a caller's shell could have set.
+[ -n "$(env_value POLYTRONX_EXECUTOR_CA_FILE "$TARGET")" ] ||
+  die "rollback target names no POLYTRONX_EXECUTOR_CA_FILE: it predates the executor CA mount. Add the public ca.crt path to it (runbooks/deploy-and-rollback.md); nothing was changed"
 
 for pair in CONTROL_PLANE WEB; do
   ref_var="${pair}_IMAGE"

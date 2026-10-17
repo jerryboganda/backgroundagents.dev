@@ -94,4 +94,36 @@ describe("createSandboxProviderFromEnv", () => {
       })
     ).not.toThrow();
   });
+
+  it("selects the VPS executor provider from SANDBOX_PROVIDER", () => {
+    const env = createEnv({
+      SANDBOX_PROVIDER: "vps",
+      VPS_EXECUTOR_URL: "https://executor.test",
+      VPS_EXECUTOR_TOKEN: "executor-token",
+      VPS_EXECUTOR_ADMISSION_SECRET: "admission-secret",
+    });
+
+    expect(createSandboxProviderFromEnv(env).name).toBe("vps");
+  });
+
+  it("fails before any allocation when the VPS admission secret is missing", () => {
+    expect(() =>
+      createSandboxProviderFromEnv(
+        createEnv({
+          SANDBOX_PROVIDER: "vps",
+          VPS_EXECUTOR_URL: "https://executor.test",
+          VPS_EXECUTOR_TOKEN: "executor-token",
+        })
+      )
+    ).toThrow("VPS executor admission secret is required");
+  });
+
+  it.each([
+    { VPS_EXECUTOR_URL: "https://executor.test" },
+    { VPS_EXECUTOR_TOKEN: "executor-token" },
+  ])("fails fast on partial VPS executor config: %o", (partial) => {
+    expect(() =>
+      createSandboxProviderFromEnv(createEnv({ SANDBOX_PROVIDER: "vps", ...partial }))
+    ).toThrow("VPS executor URL and token are required");
+  });
 });

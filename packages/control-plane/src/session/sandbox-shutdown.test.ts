@@ -59,7 +59,13 @@ function provider(overrides: Partial<SandboxProvider> = {}): SandboxProvider {
   } as SandboxProvider;
 }
 
-function fixture(providerValue = provider(), options: { durable?: boolean } = {}) {
+function fixture(
+  providerValue = provider(),
+  options: {
+    durable?: boolean;
+    admission?: { releaseStopped: (...args: unknown[]) => Promise<string> };
+  } = {}
+) {
   let now = 100_000;
   const store = options.durable ? new DurableStore() : new MemoryStore();
   const calls: string[] = [];
@@ -123,6 +129,7 @@ function fixture(providerValue = provider(), options: { durable?: boolean } = {}
     onLifecycleChange: vi.fn(async () => undefined),
     reconcileStatusFromMessages: vi.fn(async () => undefined),
     retireAccess: vi.fn(() => calls.push("access-retired")),
+    admission: options.admission,
     now: () => now,
     log: { info: vi.fn(), warn: vi.fn() },
   };
@@ -1594,6 +1601,112 @@ describe("SandboxShutdownCoordinator", () => {
     expect(f.deps.background.submit).toHaveBeenCalledWith(expect.any(Function), {
       name: "sandbox.lifecycle_change",
     });
+  });
+
+  it("releases the admission slot of the source a discard confirmed stopped, for its generation", async () => {
+    const releaseStopped = vi.fn(async (..._args: unknown[]) => "released");
+    const stopSandbox = vi.fn(async () => ({ success: true as const }));
+    const f = fixture(
+      provider({
+        takeSnapshot: vi.fn(async () => {
+          throw new Error("capture failed");
+        }),
+        stopSandbox,
+      }),
+      { admission: { releaseStopped } }
+    );
+    await readyFinite(f);
+    await f.shutdown.requestShutdown("heartbeat_timeout", "emergency");
+    expect(recoveryActions(f.shutdown)).toContain("discard");
+
+    await f.shutdown.recover("discard");
+
+    expect(stopSandbox).toHaveBeenCalledOnce();
+    expect(releaseStopped).toHaveBeenCalledWith(
+      "session-1",
+      "provider-object-1",
+      GENERATION.createdAt
+    );
+    expect(f.store.value).toMatchObject({
+      phase: "running",
+      providerObjectId: null,
+      sourceRetired: true,
+    });
+  });
+
+  it("retires a captured source and releases its slot once the stop is confirmed", async () => {
+    const releaseStopped = vi.fn(async (..._args: unknown[]) => "released");
+    const f = fixture(
+      provider({
+        takeSnapshot: vi.fn(async () => ({
+          success: true,
+          imageId: "image-1",
+          sourceStopped: false,
+        })),
+        stopSandbox: vi.fn(async () => ({ success: true })),
+      }),
+      { admission: { releaseStopped } }
+    );
+    await readyFinite(f);
+    await f.shutdown.requestShutdown("sandbox_lifetime_expiring");
+    f.shutdown.prepared(preparedEvent(f.store.value!));
+
+    await f.shutdown.handleAlarm();
+
+    expect(f.store.value).toMatchObject({ phase: "saved" });
+    expect(releaseStopped).toHaveBeenCalledWith(
+      "session-1",
+      "provider-object-1",
+      GENERATION.createdAt
+    );
+  });
+
+  it("does not settle a discard whose slot release is refused, so the source stays held", async () => {
+    const releaseStopped = vi.fn(async (..._args: unknown[]) => "refused");
+    const stopSandbox = vi.fn(async () => ({ success: true as const }));
+    const f = fixture(
+      provider({
+        takeSnapshot: vi.fn(async () => {
+          throw new Error("capture failed");
+        }),
+        stopSandbox,
+      }),
+      { admission: { releaseStopped } }
+    );
+    await readyFinite(f);
+    await f.shutdown.requestShutdown("heartbeat_timeout", "emergency");
+
+    await f.shutdown.recover("discard");
+
+    expect(stopSandbox).toHaveBeenCalledOnce();
+    expect(releaseStopped).toHaveBeenCalledOnce();
+    expect(f.deps.sandbox.discardSandboxState).not.toHaveBeenCalled();
+    expect(f.store.value).toMatchObject({
+      providerObjectId: "provider-object-1",
+      error: "The sandbox could not be stopped, so nothing was discarded. Try again.",
+    });
+  });
+
+  it("releases nothing when the source stop is not confirmed", async () => {
+    const releaseStopped = vi.fn(async (..._args: unknown[]) => "released");
+    const stopSandbox = vi.fn(async () => ({ success: false as const, error: "executor busy" }));
+    const f = fixture(
+      provider({
+        takeSnapshot: vi.fn(async () => {
+          throw new Error("capture failed");
+        }),
+        stopSandbox,
+      }),
+      { admission: { releaseStopped } }
+    );
+    await readyFinite(f);
+    await f.shutdown.requestShutdown("heartbeat_timeout", "emergency");
+
+    await f.shutdown.recover("discard");
+
+    expect(stopSandbox).toHaveBeenCalledOnce();
+    expect(releaseStopped).not.toHaveBeenCalled();
+    expect(f.deps.sandbox.discardSandboxState).not.toHaveBeenCalled();
   });
 
   it("claims a discard durably so no other recovery can act while its source stops", async () => {

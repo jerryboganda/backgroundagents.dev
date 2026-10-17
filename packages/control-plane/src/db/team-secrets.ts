@@ -7,7 +7,7 @@ import {
   toSecretMetadata,
   type SecretsWriteResult,
 } from "./scoped-secrets";
-import { normalizeKey, validateKey, type SecretMetadata } from "./secrets-validation";
+import { normalizeKey, validateKeyForDelete, type SecretMetadata } from "./secrets-validation";
 import type { SqlDatabase, SqlStatement } from "./sql-database";
 import { TeamAuditStore, type TeamAuditInput } from "./team-audit";
 
@@ -96,7 +96,7 @@ export class TeamSecretsStore {
 
   async deleteSecret(teamId: string, key: string, audit?: SecretAuditInput): Promise<boolean> {
     const normalizedKey = normalizeKey(key);
-    validateKey(normalizedKey);
+    validateKeyForDelete(normalizedKey);
     const statements = [
       this.db
         .prepare("DELETE FROM team_secrets WHERE team_id = ? AND key = ?")

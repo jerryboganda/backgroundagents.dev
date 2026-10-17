@@ -9,6 +9,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import { describe, it } from "node:test";
 import {
   BASH,
+  EXECUTOR_CA_PATH,
   HAS_FLOCK,
   LIVE_SECRETS,
   composeCalls,
@@ -243,16 +244,27 @@ describe("rollback.sh restore-target guards", () => {
     const sb = makeSandbox({ replace: ROLLBACK_STUBS });
     mkdirSync(sb.state, { recursive: true });
     writeFileSync(`${sb.state}/attempted.env`, "MIGRATIONS_LATEST=0073\n");
-    const target = writeRelease(sb, "target.env", { MIGRATIONS_LATEST: "0072" });
+    const target = writeRelease(sb, "target.env", { MIGRATIONS_LATEST: "0072", POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH });
     const result = runScript(sb, "rollback.sh", rollbackArgs(sb, target));
     assert.equal(result.status, 1);
     assert.match(result.stderr, /schema \(0072\) is older than the running schema \(0073\)/);
     assert.deepEqual(composeCalls(sb), []);
   });
 
+  it("refuses a release from before the executor CA mount, before any docker call, and says how to fix it", () => {
+    const sb = makeSandbox({ replace: ROLLBACK_STUBS });
+    const target = writeRelease(sb, "old.env");
+    const result = runScript(sb, "rollback.sh", rollbackArgs(sb, target));
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /names no POLYTRONX_EXECUTOR_CA_FILE: it predates the executor CA mount/);
+    assert.match(result.stderr, /nothing was changed/);
+    assert.equal(stubCalls(sb).some((line) => line.startsWith("docker")), false);
+    assert.deepEqual(composeCalls(sb), []);
+  });
+
   it("a failed up on the rollback target is logged, and smoke does not run", () => {
     const sb = makeSandbox({ replace: ROLLBACK_STUBS });
-    const target = writeRelease(sb, "target.env");
+    const target = writeRelease(sb, "target.env", { POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH });
     const result = runScript(sb, "rollback.sh", rollbackArgs(sb, target), { STUB_UP_EXIT: "1" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /up failed on the rollback target/);
@@ -355,7 +367,7 @@ describe("restore-rehearsal.sh live-restore refusals", () => {
     const key = writeKey(sb);
     // A fresh rehearsal secrets directory, as the documented flow gives it.
     const secrets = `${sb.root}/rehearsal-secrets`;
-    const release = writeRelease(sb, "rehearsal.env", { POLYTRONX_SECRETS_DIR: secrets });
+    const release = writeRelease(sb, "rehearsal.env", { POLYTRONX_SECRETS_DIR: secrets, POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH });
     const backup = encryptedBackup(sb, key);
     const result = runScript(
       sb,
@@ -388,10 +400,30 @@ describe("restore-rehearsal.sh live-restore refusals", () => {
     assert.deepEqual(stubCalls(sb), []);
   });
 
+  it("refuses a rehearsal release with no CA file, which predates the executor CA mount, before any docker call", () => {
+    const sb = makeSandbox();
+    const result = runScript(sb, "restore-rehearsal.sh", restoreArgs(sb, backupFixture(sb), writeKey(sb), writeRelease(sb)));
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must name POLYTRONX_EXECUTOR_CA_FILE/);
+    assert.deepEqual(stubCalls(sb), []);
+  });
+
+  it("refuses a rehearsal CA file in the live secrets directory, under any spelling", () => {
+    const spellings = [`${LIVE_SECRETS}/executor-edge-ca.crt`, "/opt/polytronx//openinspect/secrets/executor-edge-ca.crt"];
+    for (const spelling of spellings) {
+      const sb = makeSandbox();
+      const release = writeRelease(sb, "rehearsal.env", { POLYTRONX_EXECUTOR_CA_FILE: spelling });
+      const result = runScript(sb, "restore-rehearsal.sh", restoreArgs(sb, backupFixture(sb), writeKey(sb), release));
+      assert.equal(result.status, 1, spelling);
+      assert.match(result.stderr, /names a file in the live secrets directory/, spelling);
+      assert.deepEqual(stubCalls(sb), [], spelling);
+    }
+  });
+
   it("refuses rehearsal volumes that already exist unless --reset is given", () => {
     const sb = makeSandbox();
     const result = runScript(sb, "restore-rehearsal.sh",
-      restoreArgs(sb, backupFixture(sb), writeKey(sb), writeRelease(sb)),
+      restoreArgs(sb, backupFixture(sb), writeKey(sb), writeRelease(sb, "release.env", { POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH })),
       { STUB_VOLUMES: "polytronx-openinspect-rehearsal_control-plane-data\n" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /rehearsal volumes already exist; rerun with --reset/);

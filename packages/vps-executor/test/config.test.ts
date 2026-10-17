@@ -4,6 +4,7 @@ import { readConfig } from "../src/index.ts";
 
 const TOKEN = "x".repeat(32);
 const ADMISSION_SECRET = "y".repeat(32);
+const CONTROL_PLANE_URL = "https://cp.example.test";
 
 describe("readConfig", () => {
   it("applies defaults that keep the service on localhost with bounded sandboxes", () => {
@@ -11,11 +12,15 @@ describe("readConfig", () => {
       VPS_EXECUTOR_TOKEN: TOKEN,
       VPS_EXECUTOR_ADMISSION_SECRET: ADMISSION_SECRET,
       VPS_EXECUTOR_IMAGE: "open-inspect/sandbox:1",
+      VPS_EXECUTOR_CONTROL_PLANE_URL: CONTROL_PLANE_URL,
     });
     assert.equal(config.admissionSecret, ADMISSION_SECRET);
+    assert.equal(config.controlPlaneUrl, CONTROL_PLANE_URL);
     assert.equal(config.host, "127.0.0.1");
     assert.equal(config.port, 8787);
     assert.deepEqual(config.limits, { cpus: "2", memory: "4g", pidsLimit: 512 });
+    // A new SQLite file, so an upgrade never reads the first build's JSON state at the old name.
+    assert.equal(config.stateFile, "executor-state.db");
   });
 
   it("fails closed without a strong token or an image", () => {
@@ -42,5 +47,43 @@ describe("readConfig", () => {
       () => readConfig({ VPS_EXECUTOR_TOKEN: weak, VPS_EXECUTOR_IMAGE: "img" }),
       (error: unknown) => error instanceof Error && !error.message.includes(weak)
     );
+  });
+
+  it("requires a trusted https control-plane origin, without a trailing slash", () => {
+    const env = {
+      VPS_EXECUTOR_TOKEN: TOKEN,
+      VPS_EXECUTOR_ADMISSION_SECRET: ADMISSION_SECRET,
+      VPS_EXECUTOR_IMAGE: "img",
+    };
+    assert.throws(() => readConfig(env), /VPS_EXECUTOR_CONTROL_PLANE_URL/);
+    for (const url of ["", "http://cp.example.test", "cp.example.test", "not a url"])
+      assert.throws(
+        () => readConfig({ ...env, VPS_EXECUTOR_CONTROL_PLANE_URL: url }),
+        /VPS_EXECUTOR_CONTROL_PLANE_URL/
+      );
+    const config = readConfig({ ...env, VPS_EXECUTOR_CONTROL_PLANE_URL: `${CONTROL_PLANE_URL}//` });
+    assert.equal(config.controlPlaneUrl, CONTROL_PLANE_URL);
+  });
+
+  it("defaults to the six provisioned slots under the host root, and refuses others", () => {
+    const env = {
+      VPS_EXECUTOR_TOKEN: TOKEN,
+      VPS_EXECUTOR_ADMISSION_SECRET: ADMISSION_SECRET,
+      VPS_EXECUTOR_IMAGE: "img",
+      VPS_EXECUTOR_CONTROL_PLANE_URL: CONTROL_PLANE_URL,
+    };
+    const config = readConfig(env);
+    assert.equal(config.workspaceRoot, "/srv/vps-ws/slots");
+    assert.equal(config.workspaceSlots, 6);
+    for (const slots of ["0", "7", "two", "1.5"])
+      assert.throws(
+        () => readConfig({ ...env, VPS_EXECUTOR_WORKSPACE_SLOTS: slots }),
+        /VPS_EXECUTOR_WORKSPACE_SLOTS/
+      );
+    for (const root of ["slots", "/srv/vps-ws/../slots", "/srv/vps-ws/"])
+      assert.throws(
+        () => readConfig({ ...env, VPS_EXECUTOR_WORKSPACE_ROOT: root }),
+        /VPS_EXECUTOR_WORKSPACE_ROOT/
+      );
   });
 });

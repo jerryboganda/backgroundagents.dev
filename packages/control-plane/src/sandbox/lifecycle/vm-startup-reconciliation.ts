@@ -9,8 +9,13 @@ import {
   type SandboxLifetime,
   type SandboxProvider,
 } from "../provider";
+import { admissionIdentity, type SandboxAdmissionGate } from "../admission/gate";
+import type { SandboxAdmissionIdentity } from "../admission/reservations";
 import { modalVmAllocationDetail } from "../providers/modal-provider";
-import { parsePendingVmReference } from "../providers/pending-vm-reference";
+import {
+  parsePendingVmReference,
+  parseVpsPendingVmReference,
+} from "../providers/pending-vm-reference";
 import { PENDING_VM_REFERENCE_MATERIALIZE_BOUND_MS } from "./decisions";
 import type { SandboxLaunchContext } from "./launch-context";
 import type { SandboxGeneration } from "./ports";
@@ -90,6 +95,8 @@ export interface VmStartupReconciliationDependencies {
   getLogger: () => Pick<Logger, "warn">;
   alarmScheduler: Pick<AlarmScheduler, "schedule">;
   backgroundTasks?: BackgroundTasks;
+  /** Settles a lapsed or unrecorded lease once a bridge proves the object it names. */
+  admission?: SandboxAdmissionGate;
 }
 
 /** Reconciles an already-authorized startup; owns no admission or preservation policy. */
@@ -173,16 +180,48 @@ export class VmStartupReconciliation {
 
   async createWithVmRecovery(
     config: CreateSandboxConfig,
-    generation: SandboxGeneration
+    generation: SandboxGeneration,
+    lease?: SandboxAdmissionIdentity
   ): Promise<CreateSandboxResult | null> {
-    const { provider } = this.deps;
+    const { provider, admission } = this.deps;
     try {
       return await provider.createSandbox(config);
     } catch (error) {
-      if (!provider.isUnknownStartupError?.(error)) throw error;
+      if (!provider.isUnknownStartupError?.(error)) {
+        // Only a refusal the provider classified frees the slot: it proves the create allocated nothing.
+        if (lease && admission && provider.isUnknownStartupError) {
+          if ((await admission.releaseRefused(lease)) === "refused")
+            this.deps.getLogger().warn("Refused create's admission lease was not released", {
+              event: "sandbox.admission_release_refused",
+            });
+          this.clearRefusedPendingReference(generation, config);
+        }
+        throw error;
+      }
       const recovered = await this.resolveUnknownVmStartup(generation, config);
       return recovered ? { ...recovered, createdAt: generation.createdAt } : null;
     }
+  }
+
+  /**
+   * A refused create left no object, so the pending reference it recorded names nothing. It is cleared only
+   * while it still is this generation's reference, so a respawn is not stopped on it and a newer row is untouched.
+   */
+  private clearRefusedPendingReference(
+    generation: SandboxGeneration,
+    config: PendingStartupConfig
+  ): void {
+    const { provider, storage } = this.deps;
+    const reference = provider.pendingSandboxAllocation?.(config)?.reference;
+    const row = storage.getSandbox();
+    if (
+      reference !== undefined &&
+      row?.modal_sandbox_id === generation.sandboxId &&
+      row.created_at === generation.createdAt &&
+      !row.fenced &&
+      row.modal_object_id === reference
+    )
+      storage.updateSandboxModalObjectId(null);
   }
 
   private knownBridgeStartup(
@@ -218,7 +257,7 @@ export class VmStartupReconciliation {
       const resolvedByBridge =
         !!row?.modal_object_id &&
         row.modal_object_id !== reference &&
-        parsePendingVmReference(row.modal_object_id) === null;
+        this.parsePending(row.modal_object_id) === null;
       if (
         row?.modal_sandbox_id !== generation.sandboxId ||
         row.created_at !== generation.createdAt ||
@@ -245,7 +284,7 @@ export class VmStartupReconciliation {
             current.created_at === generation.createdAt &&
             !current.fenced &&
             current.modal_object_id &&
-            parsePendingVmReference(current.modal_object_id) === null
+            this.parsePending(current.modal_object_id) === null
           ) {
             const lifetime = provider.pendingSandboxAllocation?.(config)?.lifetime;
             if (lifetime)
@@ -368,6 +407,22 @@ export class VmStartupReconciliation {
           reference
         );
         if (!committed) return;
+        const admission = this.deps.admission;
+        if (admission && generation.sandboxId) {
+          const update = await admission.settle(
+            admissionIdentity(session, {
+              sandboxId: generation.sandboxId,
+              createdAt: generation.createdAt,
+            }),
+            result.providerObjectId,
+            Date.now()
+          );
+          if (update === "refused")
+            this.deps.getLogger().warn("Bridge object has no admission lease", {
+              event: "sandbox.admission_untracked",
+              provider_object_id: result.providerObjectId,
+            });
+        }
         this.bridgeResolvedStartup = {
           generation,
           result: {
@@ -444,6 +499,13 @@ export class VmStartupReconciliation {
     this.resolvePendingBridge(generation, 0);
   }
 
+  /** Parses with the provider's own reference format, so another provider's reference is never this one's pending handle. */
+  private parsePending(value: string): { sessionId: string; sandboxId: string } | null {
+    return this.deps.provider.name === "vps"
+      ? parseVpsPendingVmReference(value)
+      : parsePendingVmReference(value);
+  }
+
   /** The generation's own pending VM reference, while a bridge lookup may resolve it. */
   private pendingBridgeTarget(generation: SandboxGeneration): {
     reference: string;
@@ -454,7 +516,7 @@ export class VmStartupReconciliation {
     if (!provider.resolveSandbox) return null;
     const row = storage.getSandbox();
     const reference = row?.modal_object_id;
-    const pending = reference ? parsePendingVmReference(reference) : null;
+    const pending = reference ? this.parsePending(reference) : null;
     const session = sessionContext.getSession();
     if (
       !row ||

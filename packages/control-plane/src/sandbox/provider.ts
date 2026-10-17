@@ -97,6 +97,17 @@ export interface SessionRepositoryInfo {
 }
 
 /**
+ * Proof that the control plane claimed an admission slot for one provider call.
+ * The provider forwards it so the sandbox platform can check the claim before creating.
+ */
+export interface SandboxAdmissionProof {
+  /** Lease token of the claimed admission slot */
+  leaseToken: string;
+  /** Epoch ms after which the lease no longer admits a create */
+  expiresAtMs: number;
+}
+
+/**
  * Configuration for creating a new sandbox.
  */
 export interface CreateSandboxConfig {
@@ -163,6 +174,8 @@ export interface CreateSandboxConfig {
    * (pull-request-service) and travel in per-repo push specs.
    */
   repositories?: SessionRepositoryInfo[];
+  /** Set only after the control plane claims an admission slot. Absent when no gate is configured. */
+  admissionLease?: SandboxAdmissionProof;
 }
 
 /** Complete browser-desktop access credential returned by sandbox providers. */
@@ -259,6 +272,8 @@ export interface RestoreConfig {
   generationCreatedAtMs?: number;
   /** Multi-repo member list — see CreateSandboxConfig. */
   repositories?: SessionRepositoryInfo[];
+  /** Set only after the control plane claims an admission slot. See CreateSandboxConfig. */
+  admissionLease?: SandboxAdmissionProof;
 }
 
 /**

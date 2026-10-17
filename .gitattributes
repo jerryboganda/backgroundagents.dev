@@ -1,0 +1,17 @@
+# Operational files are read as LF text by bash, sed and the deploy tests. These rules pin them
+# to LF in every checkout, so core.autocrlf=true on Windows cannot turn them into CRLF.
+deploy/polytronx/** text eol=lf
+.github/workflows/polytronx-openinspect.yml text eol=lf
+# The image shell scripts and the extensionless runtime oi-git-sign, by exact path. These rules
+# apply at checkout; they do not rewrite bytes already in the index or in a working tree.
+packages/sandbox-images/install/common.sh text eol=lf
+packages/sandbox-images/install/docker.sh text eol=lf
+packages/sandbox-images/install/filesystem.sh text eol=lf
+packages/sandbox-images/install/install.sh text eol=lf
+packages/sandbox-images/install/languages.sh text eol=lf
+packages/sandbox-images/install/os/amazon-linux.sh text eol=lf
+packages/sandbox-images/install/os/debian.sh text eol=lf
+packages/sandbox-images/install/runtime.sh text eol=lf
+packages/sandbox-images/install/tools.sh text eol=lf
+packages/sandbox-images/vps/entrypoint.sh text eol=lf
+packages/sandbox-runtime/src/sandbox_runtime/bin/oi-git-sign text eol=lf

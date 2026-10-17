@@ -16,6 +16,8 @@ from .locks import update_locks
 def build_image(root: Path, provider: str) -> dict[str, Any]:
     if provider not in PROVIDERS:
         raise ValueError("Unknown image provider")
+    if provider == "vps":
+        raise ValueError("vps has no native build; pack it and docker build Dockerfile.vps")
     update_locks(root, check=True)
     environment = dict(os.environ)
     commands = {

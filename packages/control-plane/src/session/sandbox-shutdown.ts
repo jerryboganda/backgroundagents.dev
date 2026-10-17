@@ -8,6 +8,7 @@ import {
 } from "@open-inspect/shared/types/sandbox-shutdown";
 import type { AlarmScheduler, BackgroundTasks } from "../platform-ports";
 import type { Logger } from "../logger";
+import type { SandboxAdmissionGate } from "../sandbox/admission/gate";
 import type { SandboxLifetime, SandboxProvider } from "../sandbox/provider";
 import { parsePersistedSandboxSettings } from "../sandbox/settings";
 import type {
@@ -76,6 +77,8 @@ interface ShutdownDependencies {
   sockets: SessionWebSocketManager;
   alarm: AlarmScheduler;
   background: BackgroundTasks;
+  /** Frees the admission slot of a source whose stop this coordinator confirmed. */
+  admission?: Pick<SandboxAdmissionGate, "releaseStopped">;
   /** Notifies the lifecycle boundary to re-evaluate queued work under current policy. */
   onLifecycleChange(): Promise<void>;
   /** Re-derives session status after any interrupted message has been persisted. */
@@ -1603,6 +1606,14 @@ export class SandboxShutdownCoordinator {
       })
     );
     if (!result.success) throw new Error(result.error ?? "Source retirement failed");
+    // The confirmed stop frees this generation's slot, from any state. A refused release leaves the slot held, so the stop is not settled.
+    const released = await this.deps.admission?.releaseStopped(
+      session.id,
+      providerObjectId,
+      state.generation.createdAt
+    );
+    if (released === "refused")
+      throw new Error("Sandbox admission lease could not be released after its source stop");
   }
 
   private owns(state: ShutdownRecord): boolean {

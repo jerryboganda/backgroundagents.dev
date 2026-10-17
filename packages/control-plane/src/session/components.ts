@@ -30,6 +30,8 @@ import { generateId, hashToken } from "../auth/crypto";
 import { getUserAuth } from "../auth/user/runtime";
 import { resolveSandboxBackendName } from "../sandbox/provider-name";
 import { createSandboxProviderFromEnv } from "../sandbox/provider-factory";
+import { SandboxAdmissionGate } from "../sandbox/admission/gate";
+import { SandboxAdmissionStore } from "../sandbox/admission/reservations";
 import { providerResumesAfterStop, type SandboxProvider } from "../sandbox/provider";
 import { resolveExecutionBudgetMs } from "../sandbox/execution-budget";
 import { createImageBuildLookup } from "../image-builds/lookup";
@@ -451,7 +453,12 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
 
   // Tier 5: access precedes shutdown and the lifecycle manager, so retirement has no manager cycle.
   const sandboxBackend = resolveSandboxBackendName(env.SANDBOX_PROVIDER);
-  const sandboxProvider = createSandboxProviderFromEnv(env, sandboxBackend);
+  const sandboxProvider = createSandboxProviderFromEnv(env, sandboxBackend, {
+    vpsLeases:
+      sandboxBackend === "vps"
+        ? new SandboxAdmissionGate(new SandboxAdmissionStore(db))
+        : undefined,
+  });
   const lifecycleSockets = new LifecycleSocketAdapter(wsManager);
   const accessLog = createSessionScopedLogger(
     createLogger("lifecycle-manager"),
@@ -492,6 +499,11 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     sockets: wsManager,
     alarm: alarmScheduler,
     background: backgroundTasks,
+    // A confirmed source stop frees its slot on the store the lifecycle manager claims from.
+    admission:
+      sandboxProvider.name === "vps"
+        ? new SandboxAdmissionGate(new SandboxAdmissionStore(db))
+        : undefined,
     // These closures are invoked only by later lifecycle work, after this
     // composition function has constructed and returned the complete graph.
     onLifecycleChange: () => messageQueue.processMessageQueue(),
@@ -1113,8 +1125,8 @@ interface LifecycleManagerDeps {
   backgroundTasks: BackgroundTasks;
 }
 
-/** Create the lifecycle manager with all required adapters. */
-function createLifecycleManager(deps: LifecycleManagerDeps): SandboxLifecycleManager {
+/** Create the lifecycle manager with all required adapters. Exported so the production wiring is tested as built. */
+export function createLifecycleManager(deps: LifecycleManagerDeps): SandboxLifecycleManager {
   const {
     provider,
     shutdown,
@@ -1209,6 +1221,11 @@ function createLifecycleManager(deps: LifecycleManagerDeps): SandboxLifecycleMan
       ? createImageBuildLookup(db, imageBuildAdmission.provider, getSessionId)
       : undefined;
 
+  // The durable slot gate bounds VPS allocations across every session, on the same global store
+  // each node reads. Other providers keep their pre-admission behavior.
+  const admission =
+    provider.name === "vps" ? new SandboxAdmissionGate(new SandboxAdmissionStore(db)) : undefined;
+
   return new SandboxLifecycleManager(
     provider,
     storage,
@@ -1221,6 +1238,7 @@ function createLifecycleManager(deps: LifecycleManagerDeps): SandboxLifecycleMan
     access,
     config,
     imageBuildLookup,
-    backgroundTasks
+    backgroundTasks,
+    admission
   );
 }

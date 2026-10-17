@@ -73,6 +73,15 @@ umask 077
 load_release_file "$RELEASE_FILE"
 [ "$POLYTRONX_SECRETS_DIR" = "$SECRETS_DIR" ] ||
   die "POLYTRONX_SECRETS_DIR in the rehearsal release must equal --secrets-dir"
+# The rehearsal mounts the public CA read-only, from a path that must not be in the live secrets directory.
+# The file is read, not the environment, which a caller's shell could have set.
+ca_file="$(env_value POLYTRONX_EXECUTOR_CA_FILE "$RELEASE_FILE")"
+[ -n "$ca_file" ] ||
+  die "the rehearsal release must name POLYTRONX_EXECUTOR_CA_FILE, a public CA copy outside the live secrets directory (runbooks/backup-and-restore.md)"
+ca_canonical="$(realpath -m -- "$ca_file")" || die "cannot resolve POLYTRONX_EXECUTOR_CA_FILE"
+case "$ca_canonical" in
+  "$live_canonical"/*) die "POLYTRONX_EXECUTOR_CA_FILE names a file in the live secrets directory; copy the public ca.crt elsewhere for the rehearsal" ;;
+esac
 
 pass() { printf 'PASS  %s\n' "$*"; }
 fail() {

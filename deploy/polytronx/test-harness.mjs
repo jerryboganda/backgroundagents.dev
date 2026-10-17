@@ -21,6 +21,8 @@ export const REPO_ROOT = `${DEPLOY_DIR}/../..`;
 const STUBS = `${DEPLOY_DIR}/testdata/stubs`;
 export const BASH = process.env.POLYTRONX_TEST_BASH || "bash";
 export const LIVE_SECRETS = "/opt/polytronx/openinspect/secrets";
+/** The default public CA path in the release template: outside the secrets directory. */
+export const EXECUTOR_CA_PATH = "/opt/polytronx/openinspect/trust/executor-edge-ca.crt";
 export const SAMPLE_ID = `sha256:${"a".repeat(64)}`;
 
 export function posix(path) {
