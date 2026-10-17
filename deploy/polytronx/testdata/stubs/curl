@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Test stub for curl. Records the arguments in $STUB_LOG, writes $STUB_CURL_BODY to the -o file,
+# prints $STUB_CURL_CODE for -w, and exits $STUB_CURL_EXIT. It never connects anywhere.
+printf 'curl %s\n' "$*" >>"$STUB_LOG"
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then out="$arg"; fi
+  prev="$arg"
+done
+if [ -n "$out" ]; then printf '%s' "${STUB_CURL_BODY:-}" >"$out"; fi
+case " $* " in
+  *" -w "*) printf '%s' "${STUB_CURL_CODE:-200}" ;;
+esac
+exit "${STUB_CURL_EXIT:-0}"

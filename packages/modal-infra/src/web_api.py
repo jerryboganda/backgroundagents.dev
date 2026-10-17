@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Annotated, Any, Self
 
 from fastapi import Header, HTTPException
+from fastapi.responses import JSONResponse
 from modal import fastapi_endpoint
 from modal.exception import TimeoutError as ModalTimeoutError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -35,6 +36,7 @@ from .app import (
     validate_control_plane_url,
 )
 from .log_config import configure_logging, get_logger
+from .sandbox.capacity import SandboxCapacityUnavailable, admission_lease_env, capacity_health
 from .sandbox.launch_policy import (
     DockerImageUnavailableError,
     InvalidDockerSettingsError,
@@ -148,6 +150,8 @@ class CreateSandboxRequest(_RepositoryContextModel):
     sandbox_backend: ModalBackend = "modal"
     retire_sandbox_id: str | None = None
     launch_deadline_at_ms: int | None = Field(default=None, gt=0)
+    # Control-plane admission lease, read only by the capacity gate; never sent to the sandbox.
+    admission_env: dict[str, str] | None = None
 
 
 class RestoreSessionConfigRequest(_RepositoryContextModel):
@@ -185,6 +189,8 @@ class RestoreSandboxRequest(_ModalRequestModel):
     sandbox_backend: ModalBackend = "modal"
     retire_sandbox_id: str | None = None
     launch_deadline_at_ms: int | None = Field(default=None, gt=0)
+    # Control-plane admission lease, read only by the capacity gate; never sent to the sandbox.
+    admission_env: dict[str, str] | None = None
 
 
 class ResolveVMSandboxRequest(_ModalRequestModel):
@@ -246,6 +252,10 @@ async def _execute_endpoint(
         execution.http_status = 409
         execution.outcome = "error"
         raise HTTPException(status_code=execution.http_status, detail=e.detail) from e
+    except SandboxCapacityUnavailable as e:
+        execution.http_status = 503
+        execution.outcome = "error"
+        raise HTTPException(status_code=503, detail=e.detail) from e
     except Exception as e:
         execution.http_status = 500
         execution.outcome = "error"
@@ -485,7 +495,8 @@ async def api_create_sandbox(
         )
 
         try:
-            handle = await manager.create_sandbox(config)
+            with admission_lease_env(parsed_request.admission_env):
+                handle = await manager.create_sandbox(config)
         except RepositoryImageUnavailableError as e:
             cause = e.__cause__ or e
             log.error(
@@ -569,11 +580,18 @@ def deployment_vm_image() -> str | None:
     return os.environ.get(DOCKER_IMAGE_ID_ENV)
 
 
-@app.function(image=function_image)
+@app.function(image=function_image, secrets=[internal_api_secret])
 @fastapi_endpoint(method="GET")
-def api_health() -> dict:
-    """Health check endpoint. Does not require authentication."""
-    return {"success": True, "data": {"status": "healthy", "service": "open-inspect-modal"}}
+def api_health() -> JSONResponse:
+    """Health check endpoint, no auth. Returns 503 only when the cap is misconfigured."""
+    status_code, capacity = capacity_health()
+    healthy = status_code == 200
+    data = {
+        "status": "healthy" if healthy else "unavailable",
+        "service": "open-inspect-modal",
+        **capacity,
+    }
+    return JSONResponse(status_code=status_code, content={"success": healthy, "data": data})
 
 
 def _snapshot_timeout_seconds(request: dict[str, Any]) -> float:
@@ -864,32 +882,33 @@ async def api_restore_sandbox(
         manager = SandboxManager()
 
         # Restore sandbox from snapshot
-        handle = await manager.restore_from_snapshot(
-            snapshot_image_id=parsed_request.snapshot_image_id,
-            session_config=session_config,
-            sandbox_id=parsed_request.sandbox_id,
-            control_plane_url=parsed_request.control_plane_url,
-            sandbox_auth_token=parsed_request.sandbox_auth_token,
-            clone_host=parsed_request.clone_host,
-            clone_username=parsed_request.clone_username,
-            user_env_vars=parsed_request.user_env_vars or None,
-            timeout_seconds=(
-                parsed_request.timeout_seconds
-                if parsed_request.timeout_seconds is not None
-                else DEFAULT_SANDBOX_TIMEOUT_SECONDS
-            ),
-            code_server_enabled=parsed_request.code_server_enabled,
-            vnc_enabled=(
-                parsed_request.vnc_enabled
-                if parsed_request.vnc_enabled is not None
-                else DEFAULT_VNC_ENABLED
-            ),
-            agent_slack_notify_enabled=parsed_request.agent_slack_notify_enabled,
-            settings=parsed_request.sandbox_settings or None,
-            sandbox_backend=parsed_request.sandbox_backend,
-            retire_sandbox_id=parsed_request.retire_sandbox_id or None,
-            launch_deadline_at_ms=parsed_request.launch_deadline_at_ms,
-        )
+        with admission_lease_env(parsed_request.admission_env):
+            handle = await manager.restore_from_snapshot(
+                snapshot_image_id=parsed_request.snapshot_image_id,
+                session_config=session_config,
+                sandbox_id=parsed_request.sandbox_id,
+                control_plane_url=parsed_request.control_plane_url,
+                sandbox_auth_token=parsed_request.sandbox_auth_token,
+                clone_host=parsed_request.clone_host,
+                clone_username=parsed_request.clone_username,
+                user_env_vars=parsed_request.user_env_vars or None,
+                timeout_seconds=(
+                    parsed_request.timeout_seconds
+                    if parsed_request.timeout_seconds is not None
+                    else DEFAULT_SANDBOX_TIMEOUT_SECONDS
+                ),
+                code_server_enabled=parsed_request.code_server_enabled,
+                vnc_enabled=(
+                    parsed_request.vnc_enabled
+                    if parsed_request.vnc_enabled is not None
+                    else DEFAULT_VNC_ENABLED
+                ),
+                agent_slack_notify_enabled=parsed_request.agent_slack_notify_enabled,
+                settings=parsed_request.sandbox_settings or None,
+                sandbox_backend=parsed_request.sandbox_backend,
+                retire_sandbox_id=parsed_request.retire_sandbox_id or None,
+                launch_deadline_at_ms=parsed_request.launch_deadline_at_ms,
+            )
 
         return {
             "success": True,

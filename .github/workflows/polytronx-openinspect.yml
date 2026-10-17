@@ -1,0 +1,496 @@
+# Builds the PolytronX release from the commit under test and packages it for
+# transfer. Manual only (workflow_dispatch). It never publishes, never logs in
+# to a registry, and never touches a host: the artifact is the hand-off.
+#
+# Artifact polytronx-release (kept 7 days): release-manifest.env,
+# control-plane.tar, web.tar, executor.tar and SHA256SUMS. runbooks/deploy-and-rollback.md
+# describes how the operator transfers and loads the first two; runbooks/executor-host.md
+# covers executor.tar.
+#
+# Action refs are full commit SHAs, each with the release tag it was resolved from
+# (git ls-remote of the official repository, 2026-10-16).
+name: PolytronX OpenInspect release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Pin, tests and static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The upstream pin must be present to check ancestry and the diff against it.
+          fetch-depth: 0
+
+      - name: Check the upstream pin and the overlay
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^UPSTREAM_REVISION=//p' deploy/polytronx/pins.env)"
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || { echo "UPSTREAM_REVISION in pins.env is not a full commit"; exit 1; }
+          git cat-file -e "$pin^{commit}" || { echo "upstream pin $pin is not in this checkout"; exit 1; }
+          git merge-base --is-ancestor "$pin" HEAD || { echo "upstream pin is not an ancestor of HEAD"; exit 1; }
+          # Only these paths may differ from the upstream pin. Any other path
+          # means upstream code changed, and the release is refused. The outer ^
+          # anchors every alternative, so a nested .gitignore is refused.
+          # Modal paths are the reviewed Modal v1 overlay; update this list with it.
+          # packages/vps-executor/ is the executor overlay: a package upstream does not have.
+          allowed='^(deploy/polytronx/|\.github/workflows/polytronx-openinspect\.yml$|packages/web/Dockerfile(\.dockerignore)?$|packages/vps-executor/|scripts/bootstrap-node-owner(\.test)?\.ts$|scripts/tsconfig\.bootstrap\.json$|packages/modal-infra/src/sandbox/(build_session|capacity|launch)\.py$|packages/modal-infra/src/web_api\.py$|packages/modal-infra/tests/test_sandbox_capacity\.py$|\.gitignore$)'
+          changed="$(git diff --name-only --no-renames "$pin" HEAD)"
+          outside="$(grep -Ev "$allowed" <<<"$changed" || true)"
+          if [ -n "$outside" ]; then
+            echo "paths differ from the upstream pin outside the overlay:"
+            echo "$outside"
+            exit 1
+          fi
+          echo "upstream pin ${pin:0:12} intact; $(grep -c . <<<"$changed" || true) overlay path(s) differ"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared and the control-plane Node bundle
+        run: |
+          npm run build -w @open-inspect/shared
+          npm run build:node -w @open-inspect/control-plane
+
+      - name: Owner bootstrap tests
+        run: node --experimental-transform-types --test scripts/bootstrap-node-owner.test.ts
+
+      - name: Owner bootstrap typecheck
+        # The workspace typecheck does not reach scripts/, so the bootstrap is checked on its own.
+        run: npx --no-install tsc -p scripts/tsconfig.bootstrap.json
+
+      - name: Deployment guard tests
+        # Operational failure paths, restore refusals, the provider cap gate, and the
+        # rendered-config rules. Stubbed docker, curl and df; nothing reaches a host or a provider.
+        run: node --test deploy/polytronx/*.test.mjs
+
+      - name: Shell syntax
+        run: find deploy/polytronx -maxdepth 1 -name '*.sh' -exec bash -n '{}' ';'
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Control-plane tests
+        run: npm test -w @open-inspect/control-plane
+
+      - name: Web tests
+        run: npm test -w @open-inspect/web
+
+  modal-linux:
+    name: Modal sandbox infra on Linux (locked uv project)
+    # Linux is the reference platform. Baseline differences seen on Windows are reported separately.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      - name: Install the locked project
+        working-directory: packages/modal-infra
+        # --locked fails when pyproject.toml and uv.lock disagree, instead of rewriting the lock.
+        run: uv sync --locked --extra dev
+
+      - name: Ruff lint and format
+        working-directory: packages/modal-infra
+        run: |
+          uv run --locked --extra dev ruff check src tests
+          uv run --locked --extra dev ruff format --check src tests
+
+      - name: Mypy
+        working-directory: packages/modal-infra
+        run: uv run --locked --extra dev mypy src/
+
+      - name: Pytest
+        working-directory: packages/modal-infra
+        run: uv run --locked --extra dev pytest tests/ -q
+
+  vps-executor:
+    name: VPS executor typecheck, tests, admission and capacity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared
+        # The control-plane admission and provider tests import the shared package.
+        run: npm run build -w @open-inspect/shared
+
+      - name: Executor base image is the pinned Node image
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^NODE_IMAGE=//p' deploy/polytronx/pins.env)"
+          grep -qxF "ARG NODE_IMAGE=$pin" packages/vps-executor/Dockerfile ||
+            { echo "packages/vps-executor/Dockerfile does not pin NODE_IMAGE from pins.env"; exit 1; }
+
+      - name: Executor typecheck
+        run: npm run typecheck -w @open-inspect/vps-executor
+
+      - name: Executor tests (admission lease, docker argv, state file, HTTP API)
+        # Every docker call is a fake here. Nothing starts a container.
+        run: npm test -w @open-inspect/vps-executor
+
+      - name: Admission and capacity tests (control plane and VPS provider)
+        # The control plane grants the lease the executor checks and holds the sandbox reservations.
+        # Unit tests with fakes only. The Modal capacity tests run in modal-linux.
+        run: npm test -w @open-inspect/control-plane -- src/sandbox/admission src/sandbox/providers/vps-provider.test.ts
+
+  compose-render:
+    name: Compose render (production and rehearsal, fail-closed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Render with placeholder values, then without an image reference
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/render"
+          mkdir -p "$work/secrets"
+          chmod 700 "$work/secrets"
+          # Empty secret files: compose reads their names, never their values.
+          : >"$work/secrets/control-plane.env"
+          : >"$work/secrets/web.env"
+          : >"$work/secrets/storage.env"
+          : >"$work/secrets/executor.env"
+          cat >"$work/release.env" <<EOF
+          CONTROL_PLANE_IMAGE=open-inspect-control-plane:render-check
+          WEB_IMAGE=open-inspect-web:render-check
+          POLYTRONX_SECRETS_DIR=$work/secrets
+          POLYTRONX_SOURCE_DIR=$GITHUB_WORKSPACE
+          POLYTRONX_EDGE_NETWORK=polytronx-edge
+          CONTROL_PLANE_LOOPBACK_PORT=18787
+          WEB_LOOPBACK_PORT=13080
+          OBJECT_STORE_BUCKET=openinspect-media
+          LITESTREAM_BUCKET=openinspect-backups
+          EOF
+          docker compose -p polytronx-openinspect --env-file "$work/release.env" \
+            -f deploy/polytronx/compose.production.yml config --quiet
+          docker compose -p polytronx-openinspect-rehearsal --env-file "$work/release.env" \
+            -f deploy/polytronx/compose.production.yml -f deploy/polytronx/compose.rehearsal.yml \
+            config --quiet
+          grep -v '^CONTROL_PLANE_IMAGE=' "$work/release.env" >"$work/release-no-image.env"
+          if docker compose -p polytronx-openinspect --env-file "$work/release-no-image.env" \
+            -f deploy/polytronx/compose.production.yml config --quiet 2>"$work/err.txt"; then
+            echo "compose rendered without CONTROL_PLANE_IMAGE; the deployment would not fail closed"
+            exit 1
+          fi
+          if ! grep -q 'CONTROL_PLANE_IMAGE must name' "$work/err.txt"; then
+            echo "render failed for another reason:"
+            cat "$work/err.txt"
+            exit 1
+          fi
+          echo "fail-closed: a missing CONTROL_PLANE_IMAGE stops the render"
+
+      - name: Check the rendered configuration
+        # Ports, networks and aliases as compose resolved them: the production loopback
+        # bindings and edge aliases, and a rehearsal with no published port and no network
+        # that leaves the host. The rules are in deploy/polytronx/rendered-config.mjs.
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/render"
+          docker compose -p polytronx-openinspect --env-file "$work/release.env" \
+            -f deploy/polytronx/compose.production.yml config --format json >"$work/production.json"
+          docker compose -p polytronx-openinspect-rehearsal --env-file "$work/release.env" \
+            -f deploy/polytronx/compose.production.yml -f deploy/polytronx/compose.rehearsal.yml \
+            config --format json >"$work/rehearsal.json"
+          node deploy/polytronx/rendered-config.mjs production "$work/production.json"
+          node deploy/polytronx/rendered-config.mjs rehearsal "$work/rehearsal.json"
+
+      - name: Render the executor stack, fail closed without its address, and check it
+        # Placeholders only: nothing here starts a container or reads a secret value. The checks
+        # read back what compose.executor.yml sets: one published port on the executor's address,
+        # a non-root user, a read-only root filesystem, dropped capabilities and limits.
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/render"
+          cat >"$work/executor-release.env" <<EOF
+          EXECUTOR_IMAGE=open-inspect-vps-executor:render-check
+          POLYTRONX_SECRETS_DIR=$work/secrets
+          EXECUTOR_BIND_ADDRESS=10.0.0.2
+          DOCKER_GID=999
+          EXECUTOR_SANDBOX_IMAGE=busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          EXECUTOR_SANDBOX_CPUS=2
+          EXECUTOR_SANDBOX_MEMORY=4g
+          EOF
+          docker compose -p polytronx-executor --env-file "$work/executor-release.env" \
+            -f deploy/polytronx/compose.executor.yml config --format json >"$work/executor.json"
+          node -e '
+            const config = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const service = config.services["vps-executor"];
+            const problems = [];
+            const ports = service.ports ?? [];
+            if (ports.length !== 1 || ports[0].host_ip !== "10.0.0.2" || String(ports[0].published) !== "8787")
+              problems.push("the executor must publish one port, on EXECUTOR_BIND_ADDRESS only");
+            if (!service.read_only) problems.push("the root filesystem is not read-only");
+            if (!(service.cap_drop ?? []).includes("ALL")) problems.push("cap_drop does not drop ALL");
+            if (!/^[1-9][0-9]*(:|$)/.test(String(service.user ?? ""))) problems.push("the executor does not run as a non-root numeric user");
+            if (service.privileged) problems.push("privileged is set");
+            if (!service.mem_limit || !service.cpus || !service.pids_limit) problems.push("a CPU, memory or pids limit is missing");
+            if (problems.length > 0) {
+              console.error(problems.join("\n"));
+              process.exit(1);
+            }
+            console.log("executor: one published port on its address, non-root, read-only, no capabilities, limits set");
+          ' "$work/executor.json"
+          grep -v '^EXECUTOR_BIND_ADDRESS=' "$work/executor-release.env" >"$work/executor-no-bind.env"
+          if docker compose -p polytronx-executor --env-file "$work/executor-no-bind.env" \
+            -f deploy/polytronx/compose.executor.yml config --quiet 2>"$work/exec-err.txt"; then
+            echo "compose rendered without EXECUTOR_BIND_ADDRESS; the executor would not fail closed"
+            exit 1
+          fi
+          grep -q 'EXECUTOR_BIND_ADDRESS must name' "$work/exec-err.txt" || {
+            echo "render failed for another reason:"
+            cat "$work/exec-err.txt"
+            exit 1
+          }
+          echo "fail-closed: a missing EXECUTOR_BIND_ADDRESS stops the render"
+
+  images:
+    name: Build, smoke and export all three images
+    needs: [verify, modal-linux, compose-render, vps-executor]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Record the revisions and the migration head
+        run: |
+          set -euo pipefail
+          overlay="$(git rev-parse HEAD)"
+          pin="$(sed -n 's/^UPSTREAM_REVISION=//p' deploy/polytronx/pins.env)"
+          ws_url="$(sed -n 's/^PUBLIC_WS_URL=//p' deploy/polytronx/pins.env)"
+          node_image="$(sed -n 's/^NODE_IMAGE=//p' deploy/polytronx/pins.env)"
+          head="$(ls terraform/d1/migrations | grep -E '^[0-9]{4}_' | sort | tail -n 1 | cut -c1-4)"
+          [[ "$overlay" =~ ^[0-9a-f]{40}$ && "$pin" =~ ^[0-9a-f]{40}$ ]] || { echo "revision is not a full commit"; exit 1; }
+          [[ "$head" =~ ^[0-9]{4}$ ]] || { echo "no migration found under terraform/d1/migrations"; exit 1; }
+          [[ "$node_image" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "NODE_IMAGE in pins.env is not pinned by digest"; exit 1; }
+          {
+            echo "OVERLAY_REVISION=$overlay"
+            echo "OPEN_INSPECT_REVISION=$pin"
+            echo "PUBLIC_WS_URL=$ws_url"
+            echo "MIGRATIONS_LATEST=$head"
+            echo "NODE_IMAGE=$node_image"
+          } >>"$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test the smoke tooling
+        run: node --test scripts/compose-smoke-paths.test.mjs scripts/compose-smoke.test.mjs
+
+      - name: Build shared package
+        run: npm run build -w @open-inspect/shared
+
+      - name: Build the control plane and smoke the stack
+        # Builds open-inspect-control-plane:local from the unmodified upstream
+        # Dockerfile, boots it with a fake Modal, round-trips a session, and
+        # checks the drain on SIGTERM.
+        run: scripts/compose-smoke.sh
+
+      - name: Tag the smoke-tested control-plane image
+        run: |
+          set -euo pipefail
+          id="$(docker image inspect -f '{{.Id}}' open-inspect-control-plane:local)"
+          docker tag open-inspect-control-plane:local "open-inspect-control-plane:$OVERLAY_REVISION"
+          echo "CONTROL_PLANE_IMAGE_ID=$id" >>"$GITHUB_ENV"
+          echo "control plane image $id"
+
+      - name: Build the web image
+        run: |
+          set -euo pipefail
+          docker buildx build --load \
+            -f packages/web/Dockerfile \
+            --build-arg OPEN_INSPECT_REVISION="$OPEN_INSPECT_REVISION" \
+            --build-arg NEXT_PUBLIC_WS_URL="$PUBLIC_WS_URL" \
+            --label "io.polytronx.overlay-revision=$OVERLAY_REVISION" \
+            -t "open-inspect-web:$OVERLAY_REVISION" .
+          id="$(docker image inspect -f '{{.Id}}' "open-inspect-web:$OVERLAY_REVISION")"
+          echo "WEB_IMAGE_ID=$id" >>"$GITHUB_ENV"
+          echo "web image $id"
+
+      - name: Check the web image layout and start it
+        run: |
+          set -euo pipefail
+          image="open-inspect-web:$OVERLAY_REVISION"
+          docker run --rm --entrypoint sh "$image" -c \
+            'test -f packages/web/server.js && test -d packages/web/.next/static && test -d packages/web/public'
+          # The secret is generated for this run only and is never printed.
+          docker run -d --name web-smoke -p 127.0.0.1:3000:3000 \
+            -e CONTROL_PLANE_URL=http://127.0.0.1:9 \
+            -e SERVICE_AUTH_SECRET="$(openssl rand -hex 32)" \
+            "$image" >/dev/null
+          code=000
+          for _ in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/ || true)"
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then
+              echo "web answered HTTP $code"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "web did not answer below 500 (last: $code)"
+          docker logs web-smoke || true
+          exit 1
+
+      - name: Build the VPS executor image
+        # Built from its own directory, so the context is the package alone. The vps-executor job
+        # checks the Dockerfile's base image against NODE_IMAGE.
+        run: |
+          set -euo pipefail
+          docker buildx build --load \
+            -f packages/vps-executor/Dockerfile \
+            --label "io.polytronx.overlay-revision=$OVERLAY_REVISION" \
+            --label "io.polytronx.node-image=$NODE_IMAGE" \
+            -t "open-inspect-vps-executor:$OVERLAY_REVISION" packages/vps-executor
+          id="$(docker image inspect -f '{{.Id}}' "open-inspect-vps-executor:$OVERLAY_REVISION")"
+          echo "EXECUTOR_IMAGE_ID=$id" >>"$GITHUB_ENV"
+          echo "executor image $id"
+
+      - name: Check the executor image and start it without a container runtime
+        # The image runs as node and carries the docker CLI. Started with no docker socket, it must
+        # answer 503 on its health route, which shows it fails closed when gVisor is absent. The
+        # token and admission secret are generated for this run only and are never printed. No
+        # sandbox is created.
+        run: |
+          set -euo pipefail
+          image="open-inspect-vps-executor:$OVERLAY_REVISION"
+          user="$(docker inspect -f '{{.Config.User}}' "$image")"
+          [ "$user" = "node" ] || { echo "executor image runs as '$user', not node"; exit 1; }
+          docker run --rm --entrypoint sh "$image" -c 'command -v docker >/dev/null && node --version'
+          docker run -d --name executor-smoke -p 127.0.0.1:18788:8787 \
+            -e VPS_EXECUTOR_TOKEN="$(openssl rand -hex 32)" \
+            -e VPS_EXECUTOR_ADMISSION_SECRET="$(openssl rand -hex 32)" \
+            -e VPS_EXECUTOR_HOST=0.0.0.0 \
+            -e VPS_EXECUTOR_IMAGE=busybox:1.36 \
+            "$image" >/dev/null
+          code=000
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18788/v1/health || true)"
+            if [ "$code" != "000" ]; then break; fi
+            sleep 1
+          done
+          if [ "$code" != "503" ]; then
+            echo "executor health answered HTTP $code; expected 503 without a container runtime"
+            docker logs executor-smoke || true
+            exit 1
+          fi
+          echo "executor answers 503 without a container runtime"
+
+      - name: Export the release archives
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          docker save -o release/control-plane.tar "open-inspect-control-plane:$OVERLAY_REVISION"
+          docker save -o release/web.tar "open-inspect-web:$OVERLAY_REVISION"
+          docker save -o release/executor.tar "open-inspect-vps-executor:$OVERLAY_REVISION"
+          # Each archive must carry the image ID it is recorded with. The listing
+          # goes to a file so grep -q cannot close a pipe early under pipefail.
+          for pair in "control-plane.tar:$CONTROL_PLANE_IMAGE_ID" "web.tar:$WEB_IMAGE_ID" "executor.tar:$EXECUTOR_IMAGE_ID"; do
+            file="${pair%%:*}"
+            hex="${pair#*:}"
+            hex="${hex#sha256:}"
+            tar -tf "release/$file" >"$RUNNER_TEMP/$file.list"
+            grep -F -q "$hex" "$RUNNER_TEMP/$file.list" || { echo "$file does not carry image $hex"; exit 1; }
+          done
+
+      - name: Write the release manifest and checksums
+        run: |
+          set -euo pipefail
+          cat >release/release-manifest.env <<EOF
+          # Image and revision values. The CONTROL_PLANE and WEB lines go to state/release.env on
+          # the dashboard host; the EXECUTOR lines go to executor-release.env on the executor host.
+          # Site values (paths, ports, buckets, addresses) stay with the operator. Nothing here is a secret.
+          CI_RUN_ID=$GITHUB_RUN_ID
+          CI_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT
+          OPEN_INSPECT_REVISION=$OPEN_INSPECT_REVISION
+          OVERLAY_REVISION=$OVERLAY_REVISION
+          MIGRATIONS_LATEST=$MIGRATIONS_LATEST
+          CONTROL_PLANE_IMAGE=open-inspect-control-plane:$OVERLAY_REVISION
+          CONTROL_PLANE_IMAGE_ID=$CONTROL_PLANE_IMAGE_ID
+          WEB_IMAGE=open-inspect-web:$OVERLAY_REVISION
+          WEB_IMAGE_ID=$WEB_IMAGE_ID
+          EXECUTOR_IMAGE=open-inspect-vps-executor:$OVERLAY_REVISION
+          EXECUTOR_IMAGE_ID=$EXECUTOR_IMAGE_ID
+          EOF
+          (cd release && sha256sum control-plane.tar web.tar executor.tar >SHA256SUMS && sha256sum -c SHA256SUMS)
+          cat release/release-manifest.env
+
+      - name: Upload the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: polytronx-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload compose smoke logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compose-smoke-logs
+          path: smoke-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove the web smoke container
+        if: always()
+        run: docker rm -f web-smoke >/dev/null 2>&1 || true
+
+      - name: Remove the executor smoke container
+        if: always()
+        run: docker rm -f executor-smoke >/dev/null 2>&1 || true

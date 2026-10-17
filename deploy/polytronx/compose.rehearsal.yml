@@ -1,0 +1,34 @@
+# Isolated restore rehearsal: an overlay on compose.production.yml.
+#
+#   docker compose -p polytronx-openinspect-rehearsal --env-file rehearsal.env \
+#     -f compose.production.yml -f compose.rehearsal.yml up -d --wait
+#
+# The rehearsal is a separate project. Its volumes, networks and containers are
+# named with its own prefix, so it cannot touch the live project's data. This
+# overlay adds the containment a restored production database needs:
+#
+# - No published ports. Checks run inside the containers (scripts/restore-rehearsal.sh).
+# - No route out. The control plane's egress network and the edge network are
+#   internal, so a restored automation cannot reach GitHub, Modal or a provider,
+#   and cannot push a branch or open a pull request.
+# - Its own object store, populated only from the backup. Litestream writes
+#   replicas there, never to the live bucket.
+#
+# The rehearsal reads the same encryption keys as production (restored from
+# the encrypted backup), because the restored records are encrypted with them.
+
+name: polytronx-openinspect-rehearsal
+
+services:
+  app:
+    ports: !override []
+  web:
+    ports: !override []
+
+networks:
+  edge:
+    name: polytronx-rehearsal-edge
+    external: false
+    internal: true
+  egress:
+    internal: true

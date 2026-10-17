@@ -1,0 +1,25 @@
+# Context for packages/web/Dockerfile, which builds from the repository root
+# like the control-plane image. BuildKit reads this file, beside the Dockerfile,
+# in place of the root .dockerignore, which excludes packages/web entirely.
+*
+!package.json
+!package-lock.json
+!packages/shared/
+!packages/web/
+
+# Rebuilt inside the image, never copied in from a developer machine.
+**/node_modules/
+**/dist/
+**/.next/
+**/.open-next/
+**/.wrangler/
+**/.vercel/
+**/coverage/
+**/*.tsbuildinfo
+
+# Secrets never enter the build context: Next reads .env files at build time
+# and Wrangler reads .dev.vars.
+**/.env
+**/.env.*
+**/.dev.vars
+**/*.pem

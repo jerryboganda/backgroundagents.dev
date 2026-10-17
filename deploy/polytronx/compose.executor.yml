@@ -1,0 +1,77 @@
+# PolytronX VPS executor: the sandbox service for the VPS provider, on the executor host.
+# A separate stack from compose.production.yml, which runs on the dashboard host.
+#
+# - One service: the executor image from the release archive, loaded and checked by
+#   deploy-executor.sh. Pull policy never. Values come from executor-release.env and the
+#   executor.env secret file in POLYTRONX_SECRETS_DIR. No secret value is in this file.
+# - The sandboxes are not defined here. The executor starts each one with
+#   `docker run --runtime runsc` and the limits set below. None of them gets the Docker
+#   socket or a published port.
+# - The Docker socket is root-equivalent on this host, so this is the only container that
+#   mounts it. The service runs as uid 1000 with the engine's docker group added, a read-only
+#   root filesystem, all capabilities dropped, and no-new-privileges.
+# - The port is published on EXECUTOR_BIND_ADDRESS only. Docker publishes past ufw's INPUT
+#   rules, so the DOCKER-USER allowlist in runbooks/executor-host.md limits the source.
+#
+# DOCKER_GID is the group of the engine socket. The deploy and preflight scripts export it.
+# Required values fail the render when unset (${NAME:?...}). Render check, which reads no secret:
+#   docker compose -p polytronx-executor --env-file executor-release.env \
+#     -f compose.executor.yml config --quiet
+
+name: polytronx-executor
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  vps-executor:
+    image: ${EXECUTOR_IMAGE:?EXECUTOR_IMAGE must name the verified executor image in executor-release.env}
+    pull_policy: never
+    user: "1000:1000"
+    group_add:
+      - ${DOCKER_GID:?DOCKER_GID must name the docker group of the engine socket}
+    env_file:
+      - ${POLYTRONX_SECRETS_DIR:?POLYTRONX_SECRETS_DIR must name the host secrets directory}/executor.env
+    environment:
+      # Listens on every address inside the container. The published port below is the only way in.
+      VPS_EXECUTOR_HOST: 0.0.0.0
+      VPS_EXECUTOR_PORT: "8787"
+      VPS_EXECUTOR_STATE_FILE: /var/lib/vps-executor/executor-state.json
+      VPS_EXECUTOR_IMAGE: ${EXECUTOR_SANDBOX_IMAGE:?EXECUTOR_SANDBOX_IMAGE must name the sandbox image by digest in executor-release.env}
+      VPS_EXECUTOR_SANDBOX_CPUS: ${EXECUTOR_SANDBOX_CPUS:?EXECUTOR_SANDBOX_CPUS must set the CPU limit of each sandbox}
+      VPS_EXECUTOR_SANDBOX_MEMORY: ${EXECUTOR_SANDBOX_MEMORY:?EXECUTOR_SANDBOX_MEMORY must set the memory limit of each sandbox}
+    ports:
+      - "${EXECUTOR_BIND_ADDRESS:?EXECUTOR_BIND_ADDRESS must name one address of this host}:8787:8787"
+    volumes:
+      - executor-state:/var/lib/vps-executor
+      # Read by the executor to start sandboxes through the engine. Only this service mounts it.
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/v1/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    cpus: ${EXECUTOR_CPUS:-1}
+    mem_limit: ${EXECUTOR_MEM_LIMIT:-512m}
+    pids_limit: 256
+    stop_grace_period: 15s
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  executor-state:

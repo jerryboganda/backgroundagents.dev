@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Test stand-in for flock, copied in only where util-linux flock is absent. It always succeeds.
+# Tests that need real locking check for flock and skip when it is missing.
+printf 'flock %s\n' "$*" >>"$STUB_LOG"
+exit 0

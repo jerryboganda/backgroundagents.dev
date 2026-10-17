@@ -1,0 +1,241 @@
+# PolytronX OpenInspect: the production stack for one pinned upstream revision.
+#
+# Derived from the upstream docker-compose.yml (control plane, SeaweedFS and
+# Litestream) and its smoke overlay, with the changes the deployment needs:
+#
+# - A fixed project name. Volumes take the project prefix, so the data is
+#   polytronx-openinspect_control-plane-data and polytronx-openinspect_object-store-data.
+# - Images by reference only, from release.env, with pull_policy: never. The
+#   deploy script pulls or loads them and checks their IDs before compose runs.
+# - The web dashboard, which upstream does not containerize.
+# - Browser ingress on loopback and on the external edge network the existing
+#   proxy joins. The object store is not published, and the backend network is internal.
+# - No Caddy profile, no Docker socket, no privileged service, no
+#   UNSAFE_ALLOW_ALL_USERS, and resource, health, restart and log limits on every service.
+#
+# Required values fail the render when unset (${NAME:?...}), so a missing image
+# reference or secrets directory stops the deploy before anything starts.
+# Render check, which reads no secret values:
+#   docker compose -p polytronx-openinspect --env-file release.env \
+#     -f compose.production.yml config --quiet
+#
+# Secrets live in POLYTRONX_SECRETS_DIR (mode 0700, files 0600), never in this
+# file or release.env. See runbooks/accounts-and-admission.md for each variable.
+
+name: polytronx-openinspect
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  app:
+    image: ${CONTROL_PLANE_IMAGE:?CONTROL_PLANE_IMAGE must name the verified control-plane image in release.env}
+    pull_policy: never
+    env_file:
+      - ${POLYTRONX_SECRETS_DIR:?POLYTRONX_SECRETS_DIR must name the host secrets directory}/control-plane.env
+      - ${POLYTRONX_SECRETS_DIR:?POLYTRONX_SECRETS_DIR must name the host secrets directory}/storage.env
+    environment:
+      # Pinned here, as upstream pins them, so an env file cannot move the host
+      # off its volume, its port or its drain budget.
+      HOST: 0.0.0.0
+      PORT: "8787"
+      DATA_DIR: /data
+      SHUTDOWN_TIMEOUT_MS: "30000"
+      # Plain HTTP to the object store, on the internal backend network only.
+      OBJECT_STORE_ENDPOINT: http://object-store:9000
+      OBJECT_STORE_ALLOW_HTTP: "true"
+      OBJECT_STORE_FORCE_PATH_STYLE: "true"
+      OBJECT_STORE_REGION: us-east-1
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:?OBJECT_STORE_BUCKET must name the media bucket in release.env}
+      LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:?LITESTREAM_BUCKET must name the backup bucket in release.env}
+      LITESTREAM_ENDPOINT: http://object-store:9000
+    stop_grace_period: 40s
+    ports:
+      - "127.0.0.1:${CONTROL_PLANE_LOOPBACK_PORT:-18787}:8787"
+    volumes:
+      - control-plane-data:/data
+    networks:
+      edge:
+        # The NPM forward hostname for cp.ai (templates/npm-edge-proxy.md). Unique on purpose:
+        # other networks NPM joins may already carry generic names such as app or web.
+        aliases:
+          - polytronx-openinspect-app
+      backend: {}
+      egress: {}
+    depends_on:
+      object-store:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    mem_limit: ${CONTROL_PLANE_MEM_LIMIT:-1536m}
+    cpus: ${CONTROL_PLANE_CPUS:-2}
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    restart: unless-stopped
+
+  # SeaweedFS as the S3-compatible store for media and backups. Mirrors the
+  # upstream service of the same name, which is pinned by digest. Only the
+  # application and Litestream reach it, over the internal backend network.
+  object-store:
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    pull_policy: never
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        WEED_JWT_FILER_SIGNING_KEY="$$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        export WEED_JWT_FILER_SIGNING_KEY
+        /entrypoint.sh server -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.ip.bind=0.0.0.0 \
+          -master.peers=none -master.telemetry=false -volume.preStopSeconds=1 \
+          -filer -s3 -s3.port=9000 -s3.port.iceberg=0 -s3.port.lance=0 &
+        server=$$!
+        trap 'kill -TERM "$$server"' TERM INT
+        until curl -sf -o /dev/null http://localhost:9000/healthz; do
+          kill -0 "$$server" 2>/dev/null || exit 1
+          sleep 1
+        done
+        IFS=,
+        for bucket in $$S3_BUCKET; do
+          echo "s3.bucket.create -name $$bucket" | weed shell -master=127.0.0.1:9333 >/dev/null
+        done
+        wait "$$server" || wait "$$server"
+    env_file:
+      - ${POLYTRONX_SECRETS_DIR:?POLYTRONX_SECRETS_DIR must name the host secrets directory}/storage.env
+    environment:
+      S3_BUCKET: ${OBJECT_STORE_BUCKET:?OBJECT_STORE_BUCKET must name the media bucket in release.env},${LITESTREAM_BUCKET:?LITESTREAM_BUCKET must name the backup bucket in release.env}
+    # No ports: nothing outside the backend network reaches the object store.
+    volumes:
+      - object-store-data:/data
+    networks:
+      - backend
+    healthcheck:
+      # Asks the filer for each bucket: S3 answers an unsigned request 403 whether or not a bucket exists.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf -o /dev/null http://localhost:9000/healthz &&
+          IFS=, && for bucket in $$S3_BUCKET; do
+          curl -sf -o /dev/null "http://localhost:8888/buckets/$$bucket/" || exit 1;
+          done
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    stop_grace_period: 20s
+    mem_limit: 1g
+    cpus: 1
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    restart: unless-stopped
+
+  # Replicates /data/global.db to the object store. Upstream replicates only
+  # the global store; see runbooks/backup-and-restore.md for the rest of the state.
+  litestream:
+    image: litestream/litestream:0.3.13@sha256:027eda2a89a86015b9797d2129d4dd447e8953097b4190e1d5a30b73e76d8d58
+    pull_policy: never
+    # The application's user, so the shadow WAL it writes beside the database is owned like the database.
+    user: "1000:1000"
+    command: replicate -config /etc/litestream.yml
+    env_file:
+      - ${POLYTRONX_SECRETS_DIR:?POLYTRONX_SECRETS_DIR must name the host secrets directory}/storage.env
+    environment:
+      LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:?LITESTREAM_BUCKET must name the backup bucket in release.env}
+      LITESTREAM_ENDPOINT: http://object-store:9000
+    volumes:
+      - control-plane-data:/data
+      # The pinned upstream checkout's config, read-only, so there is one copy of it.
+      - ${POLYTRONX_SOURCE_DIR:?POLYTRONX_SOURCE_DIR must name the pinned upstream checkout}/packages/control-plane/docker/litestream.yml:/etc/litestream.yml:ro
+    networks:
+      - backend
+    depends_on:
+      app:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    stop_grace_period: 15s
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    restart: unless-stopped
+
+  # The dashboard. It reaches the control plane over the backend network and
+  # is published on loopback for the local proxy hop.
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE must name the verified web image in release.env}
+    pull_policy: never
+    env_file:
+      - ${POLYTRONX_SECRETS_DIR:?POLYTRONX_SECRETS_DIR must name the host secrets directory}/web.env
+    environment:
+      CONTROL_PLANE_URL: http://app:8787
+    ports:
+      - "127.0.0.1:${WEB_LOOPBACK_PORT:-13080}:3000"
+    networks:
+      edge:
+        # The NPM forward hostname for ai (templates/npm-edge-proxy.md). Unique, as on app.
+        aliases:
+          - polytronx-openinspect-web
+      backend: {}
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.status < 500 ? 0 : 1), () => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 15s
+    mem_limit: ${WEB_MEM_LIMIT:-768m}
+    cpus: ${WEB_CPUS:-1}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  control-plane-data:
+  object-store-data:
+
+networks:
+  # Created by deploy.sh once, after preflight. The existing proxy joins it so it can
+  # reach web and app by the aliases polytronx-openinspect-web and
+  # polytronx-openinspect-app. Only the proxy and these two services may attach.
+  edge:
+    name: ${POLYTRONX_EDGE_NETWORK:-polytronx-edge}
+    external: true
+  # Outbound access for the control plane only: GitHub, Modal, provider APIs.
+  egress:
+    driver: bridge
+  # Internal: the object store and Litestream have no route outside this host.
+  backend:
+    driver: bridge
+    internal: true

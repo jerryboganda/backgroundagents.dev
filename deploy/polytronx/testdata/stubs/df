@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Test stub for df -P <path>. The free column is $STUB_DF_FREE_KB for $STUB_DOCKER_ROOT and 1 for
+# any other path, so a test can see which path was measured. The used column is always 10%.
+path="${!#}"
+printf 'df %s\n' "$*" >>"$STUB_LOG"
+free=1
+if [ "$path" = "${STUB_DOCKER_ROOT:-}" ]; then free="${STUB_DF_FREE_KB:-0}"; fi
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "stub 100 10 $free 10% $path"

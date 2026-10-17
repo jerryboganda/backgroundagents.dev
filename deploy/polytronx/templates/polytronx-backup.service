@@ -1,0 +1,14 @@
+# Template: copy to /etc/systemd/system/ and enable polytronx-backup.timer, as runbooks/backup-and-restore.md
+# describes. Not installed by any script. Each run stops the application for one to two minutes.
+[Unit]
+Description=PolytronX OpenInspect encrypted full-state backup
+Wants=polytronx-backup.timer
+
+[Service]
+Type=oneshot
+# The tree is the extracted pinned source; paths below are the VPS layout in runbooks/deploy-and-rollback.md.
+# flock -n takes the project lock that deploy.sh and rollback.sh also take. If a release is in progress,
+# this run fails at once and the next timer run tries again; a backup never overlaps a release.
+ExecStart=/usr/bin/flock -n /opt/polytronx/openinspect/state/project.lock /opt/polytronx/openinspect/source/deploy/polytronx/backup.sh --release /opt/polytronx/openinspect/state/last-good.env --secrets-dir /opt/polytronx/openinspect/secrets --backup-dir /opt/polytronx/openinspect/backups --key-file /opt/polytronx/openinspect/keys/backup.key --label periodic
+TimeoutStartSec=2h
+NoNewPrivileges=true

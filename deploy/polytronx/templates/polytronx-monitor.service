@@ -1,0 +1,12 @@
+# Template: copy to /etc/systemd/system/ and enable the timer. Not installed by any script.
+[Unit]
+Description=PolytronX OpenInspect health and hygiene check
+Wants=polytronx-monitor.timer
+
+[Service]
+Type=oneshot
+# The tree is the extracted pinned source; paths below are the VPS layout in runbooks/deploy-and-rollback.md.
+ExecStart=/opt/polytronx/openinspect/source/deploy/polytronx/monitor.sh --release /opt/polytronx/openinspect/state/release.env --secrets-dir /opt/polytronx/openinspect/secrets --backup-key /opt/polytronx/openinspect/keys/backup.key --backup-dir /opt/polytronx/openinspect/backups
+# Alert hook: any executable that reads the summary on stdin and notifies the owner.
+Environment=ALERT_HOOK=/opt/polytronx/openinspect/bin/notify
+NoNewPrivileges=true

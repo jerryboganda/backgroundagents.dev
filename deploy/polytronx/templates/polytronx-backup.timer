@@ -1,0 +1,12 @@
+# Template: runs the full-state backup daily at 03:20 UTC, in a low-traffic window. Enable with
+# systemctl enable --now polytronx-backup.timer, only after the owner accepts the daily downtime.
+[Unit]
+Description=Run the PolytronX OpenInspect full-state backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 UTC
+Persistent=true
+Unit=polytronx-backup.service
+
+[Install]
+WantedBy=timers.target

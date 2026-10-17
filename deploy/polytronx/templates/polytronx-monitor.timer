@@ -1,0 +1,11 @@
+# Template: runs the monitor every 15 minutes. Enable with systemctl enable --now polytronx-monitor.timer.
+[Unit]
+Description=Run the PolytronX OpenInspect monitor every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=polytronx-monitor.service
+
+[Install]
+WantedBy=timers.target
