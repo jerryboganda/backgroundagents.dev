@@ -90,6 +90,8 @@ def parse_launch(backend: ModalBackend, settings: dict[str, Any] | None) -> Moda
         ):
             raise InvalidDockerSettingsError(f"{name} must be a positive uint32 integer")
     if backend == "modal-vm":
+        # Requests are defaulted above for modal-vm, so the limits can be derived from them.
+        assert cpu_cores is not None and memory_mib is not None
         if cpu_limit_cores is None:
             cpu_limit_cores = max(VM_DEFAULT_CPU_LIMIT_CORES, cpu_cores)
         if memory_limit_mib is None:

@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 
 from fastapi import Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -43,6 +43,9 @@ from .sandbox.launch_policy import (
     ModalBackend,
 )
 from .sandbox.manager import VMAllocationOutcome
+
+if TYPE_CHECKING:
+    from .sandbox import SessionConfig
 
 configure_logging()
 log = get_logger("web_api")
@@ -382,8 +385,8 @@ def _normalize_optional_repository_context(
 
 
 def _session_config_from_create_request(
-    request: dict, *, repo_owner: str | None, repo_name: str | None
-):
+    request: dict[str, Any], *, repo_owner: str | None, repo_name: str | None
+) -> "SessionConfig":
     """Build the create-path SessionConfig from the flat wire request.
 
     Create is a lossy reconstruction — the manager re-serializes this typed
@@ -412,13 +415,13 @@ def _session_config_from_create_request(
 )
 @fastapi_endpoint(method="POST")
 async def api_create_sandbox(
-    request: dict,
+    request: dict[str, Any],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """
     HTTP endpoint to create a sandbox.
 
@@ -531,13 +534,13 @@ async def api_create_sandbox(
 @app.function(image=function_image, secrets=[internal_api_secret], timeout=150)
 @fastapi_endpoint(method="POST")
 async def api_resolve_vm_sandbox(
-    request: dict,
+    request: dict[str, Any],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """Authenticated lookup-only VM recovery by session and generation; no create or retire.
 
     POST body: {"session_id": "...", "sandbox_id": "..."}. No secrets or launch settings.
@@ -616,13 +619,13 @@ def _snapshot_timeout_seconds(request: dict[str, Any]) -> float:
 @app.function(image=function_image, secrets=[internal_api_secret])
 @fastapi_endpoint(method="POST")
 async def api_snapshot_sandbox(
-    request: dict,
+    request: dict[str, Any],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """
     Take a filesystem snapshot of a running sandbox using Modal's native API.
 
@@ -779,7 +782,7 @@ async def api_snapshot_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """Snapshot the exact provider session bound to an image build."""
     async with _execute_endpoint(
         endpoint_name="api_snapshot_build_sandbox",
@@ -818,13 +821,13 @@ async def api_snapshot_build_sandbox(
 @app.function(image=function_image, secrets=[internal_api_secret], timeout=150)
 @fastapi_endpoint(method="POST")
 async def api_restore_sandbox(
-    request: dict,
+    request: dict[str, Any],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """
     Create a new sandbox from a filesystem snapshot.
 
@@ -937,7 +940,7 @@ async def api_create_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """Create a dormant provider-session build sandbox."""
     async with _execute_endpoint(
         endpoint_name="api_create_build_sandbox",
@@ -1015,7 +1018,7 @@ async def api_start_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """Start a build only after its provider session is bound in D1."""
     async with _execute_endpoint(
         endpoint_name="api_start_build_sandbox",
@@ -1046,7 +1049,7 @@ async def api_terminate_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, Any]:
     """Terminate the exactly tagged provider-session build sandbox."""
     async with _execute_endpoint(
         endpoint_name="api_terminate_build_sandbox",

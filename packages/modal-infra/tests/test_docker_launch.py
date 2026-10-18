@@ -25,7 +25,12 @@ from src.sandbox.launch_policy import (
     parse_launch,
     parse_pending_vm_reference,
 )
-from src.sandbox.vm_recovery import VMServiceLaunch, parse_vm_service_launch
+from src.sandbox.vm_recovery import (
+    VM_LAUNCH_TAG,
+    VM_PORTS_TAG,
+    VMServiceLaunch,
+    parse_vm_service_launch,
+)
 
 
 def test_resource_defaults_match_shared_provider_validation():
@@ -127,6 +132,18 @@ def test_vm_launch_metadata_round_trips_at_max_extra_port_count():
     assert parse_vm_service_launch(tags) == launch
     for value in tags.values():
         assert re.fullmatch(r"[a-zA-Z0-9._-]{1,63}", value)
+
+
+@pytest.mark.parametrize(
+    ("launch", "ports"),
+    [
+        ("1-101-0-6080-7680", "none"),
+        ("1-101-8080-6080-7680", "60000-abc"),
+        ("1-101-8080-6080-7680", "-".join(str(port) for port in range(60000, 60011))),
+    ],
+)
+def test_vm_launch_metadata_rejects_out_of_range_or_malformed_ports(launch, ports):
+    assert parse_vm_service_launch({VM_LAUNCH_TAG: launch, VM_PORTS_TAG: ports}) is None
 
 
 def test_pending_vm_reference_uses_shared_two_part_wire_format():

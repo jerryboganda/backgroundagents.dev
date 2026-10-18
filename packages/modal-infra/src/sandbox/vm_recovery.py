@@ -72,20 +72,31 @@ def parse_vm_service_launch(tags: dict[str, str]) -> VMServiceLaunch | None:
     if any(flag not in "01" for flag in launch[1]) or raw_ports is None:
         return None
 
-    def port(value: str) -> int | None:
+    def port(value: str) -> int:
         if not value.isascii() or not value.isdecimal() or len(value) > 5:
-            return None
+            raise ValueError(value)
         number = int(value)
-        return number if 1 <= number <= 65535 else None
+        if not 1 <= number <= 65535:
+            raise ValueError(value)
+        return number
 
-    service_ports = [port(value) for value in launch[2:]]
-    extras = [] if raw_ports == "none" else [port(value) for value in raw_ports.split("-")]
-    if None in service_ports or None in extras or len(extras) > 10:
+    try:
+        service_ports = [port(value) for value in launch[2:]]
+        extras = [] if raw_ports == "none" else [port(value) for value in raw_ports.split("-")]
+    except ValueError:
         return None
+    if len(extras) > 10:
+        return None
+    code_server_port, novnc_port, ttyd_proxy_port = service_ports
+    code_server_enabled, vnc_enabled, terminal_enabled = (flag == "1" for flag in launch[1])
     return VMServiceLaunch(
-        *(flag == "1" for flag in launch[1]),
-        *service_ports,
-        extras,
+        code_server_enabled=code_server_enabled,
+        vnc_enabled=vnc_enabled,
+        terminal_enabled=terminal_enabled,
+        code_server_port=code_server_port,
+        novnc_port=novnc_port,
+        ttyd_proxy_port=ttyd_proxy_port,
+        tunnel_ports=extras,
     )
 
 

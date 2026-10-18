@@ -2,11 +2,11 @@
 #
 # Read-only preflight for the PolytronX deployment. Run it on the VPS before
 # deploy.sh, and after any host change. It changes nothing on the host: no pulls,
-# no networks, no containers, no volumes. Its one network request is a GET of the
-# Modal provider's api-health, which carries no credential, for the provider cap
-# gate. It prints PASS, WARN or FAIL for each check and exits 1 if any check
-# fails. Secret values are never printed; they are checked by name, shape and,
-# for the two shared secrets, by hash.
+# no networks, no containers, no volumes. Its one network request, made only when
+# SANDBOX_PROVIDER=modal, is a GET of the Modal provider's api-health, which carries
+# no credential, for the provider cap gate. It prints PASS, WARN or FAIL for each
+# check and exits 1 if any check fails. Secret values are never printed; they are
+# checked by name, shape and, for the two shared secrets, by hash.
 #
 #   preflight.sh --release <release.env> --secrets-dir <dir> --source <dir>
 #
@@ -178,12 +178,23 @@ check_secrets() {
     fail "$problem"
   fi
 }
+# The sandbox provider decides which provider keys the control plane must carry. Only the
+# name is read, never printed. Anything but vps or modal fails: no provider is assumed.
+sandbox_provider="$(env_value SANDBOX_PROVIDER "$SECRETS_DIR/control-plane.env" 2>/dev/null)"
+case "$sandbox_provider" in
+  vps) provider_keys="VPS_EXECUTOR_URL VPS_EXECUTOR_TOKEN VPS_EXECUTOR_ADMISSION_SECRET" ;;
+  modal) provider_keys="MODAL_WORKSPACE MODAL_API_SECRET" ;;
+  *)
+    provider_keys=""
+    fail "SANDBOX_PROVIDER in control-plane.env must be vps or modal; no other provider is supported"
+    ;;
+esac
 check_secrets control-plane.env \
-  DEPLOYMENT_NAME GITHUB_BOT_USERNAME WORKER_URL WEB_APP_URL MODAL_WORKSPACE \
+  DEPLOYMENT_NAME GITHUB_BOT_USERNAME WORKER_URL WEB_APP_URL \
   TOKEN_ENCRYPTION_KEY PROVIDER_ACCOUNTS_ENCRYPTION_KEY REPO_SECRETS_ENCRYPTION_KEY \
   BROWSER_AUTH_SECRET IMAGE_CALLBACK_TOKEN_PEPPER SERVICE_AUTH_SECRET_WEB \
   GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY \
-  GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET MODAL_API_SECRET
+  GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET $provider_keys
 check_secrets web.env SERVICE_AUTH_SECRET
 check_secrets storage.env AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
   LITESTREAM_ACCESS_KEY_ID LITESTREAM_SECRET_ACCESS_KEY
@@ -211,6 +222,13 @@ if [ -f "$SECRETS_DIR/web.env" ] && [ -f "$SECRETS_DIR/control-plane.env" ]; the
   else
     fail "web SERVICE_AUTH_SECRET does not match control-plane SERVICE_AUTH_SECRET_WEB"
   fi
+  # The web and the control plane must select the same sandbox provider. Compared by name only.
+  web_provider="$(env_value SANDBOX_PROVIDER "$SECRETS_DIR/web.env")"
+  if [ -n "$web_provider" ] && [ "$web_provider" = "$sandbox_provider" ]; then
+    pass "web SANDBOX_PROVIDER matches the control plane's"
+  else
+    fail "web SANDBOX_PROVIDER must be set and equal the control plane's SANDBOX_PROVIDER"
+  fi
 fi
 
 # The source tree is a git archive, so it has no .git. deploy.sh and the CI
@@ -228,15 +246,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Provider cap gate. Provisioning must not be enabled unless the Modal provider
+# Provider cap gate, Modal only. Provisioning must not be enabled unless the Modal provider
 # reports the sandbox cap this deployment expects, with pre-create enforcement.
 # A missing endpoint, a null or different value, or any other answer is a blocker.
 # ---------------------------------------------------------------------------
-cap_problem="$(provider_cap_problem "$SECRETS_DIR/control-plane.env")"
-if [ -z "$cap_problem" ]; then
-  pass "provider reports max_active_sandboxes=$PROVIDER_MAX_ACTIVE_SANDBOXES with pre-create enforcement"
-else
-  fail "provider cap gate: $cap_problem; the deploy stops before provisioning is enabled"
+if [ "$sandbox_provider" = modal ]; then
+  cap_problem="$(provider_cap_problem "$SECRETS_DIR/control-plane.env")"
+  if [ -z "$cap_problem" ]; then
+    pass "provider reports max_active_sandboxes=$PROVIDER_MAX_ACTIVE_SANDBOXES with pre-create enforcement"
+  else
+    fail "provider cap gate: $cap_problem; the deploy stops before provisioning is enabled"
+  fi
+elif [ "$sandbox_provider" = vps ]; then
+  pass "sandbox provider is vps: no Modal provider cap gate applies"
 fi
 
 # ---------------------------------------------------------------------------

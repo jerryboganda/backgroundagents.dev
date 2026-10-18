@@ -375,7 +375,7 @@ describe("private executor edge", () => {
     chmodSync(`${sb.root}/edge/tls/server.key`, 0o644);
     const result = edge(sb, root, ["check"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  .*server\.key is not mode 0600/);
+    assert.match(result.stdout, /FAIL {2}.*server\.key is not mode 0600/);
   });
 
   it("container mode refuses a tag, admits a digest, and mounts only the edge directory read-only", () => {
@@ -450,7 +450,7 @@ describe("private executor edge", () => {
     assert.match(applied.stderr, /is not Caddy 2\.11\.7/);
     const checked = edge(sb, root, ["check"], { STUB_CADDY_VERSION: "v1.9.0 h1:stub" });
     assert.equal(checked.status, 1);
-    assert.match(checked.stdout, /FAIL  .*is not Caddy 2\.11\.7/);
+    assert.match(checked.stdout, /FAIL {2}.*is not Caddy 2\.11\.7/);
   });
 
   it("rollback removes only the owned firewall rule and config, and keeps the key material", () => {
@@ -707,10 +707,10 @@ describe("sandbox network", () => {
     writeFileSync(file, [rules[1], rules[0], ...rules.slice(2)].join("\n") + "\n");
     let result = net(sb, ["check"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  POLYTRONX-SBX-FWD differs from its expected rules, in order/);
+    assert.match(result.stdout, /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/);
     writeFileSync(file, rules.map((rule) => rule.replace("--dport 53 -j ACCEPT", "--dport 54 -j ACCEPT")).join("\n") + "\n");
     result = net(sb, ["check"]);
-    assert.match(result.stdout, /FAIL  POLYTRONX-SBX-FWD differs from its expected rules, in order/);
+    assert.match(result.stdout, /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/);
   });
 
   it("writes the owned chains in the form iptables -S prints them, in order", () => {
@@ -750,7 +750,7 @@ describe("sandbox network", () => {
       writeFileSync(file, original.replace(from, to));
       const result = net(sb, ["check"]);
       assert.equal(result.status, 1, to);
-      assert.match(result.stdout, /FAIL  POLYTRONX-SBX-FWD differs from its expected rules, in order/, to);
+      assert.match(result.stdout, /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/, to);
     }
     writeFileSync(file, original);
     assert.equal(net(sb, ["check"]).status, 0);
@@ -777,8 +777,8 @@ describe("sandbox network", () => {
     const sb = netSandbox();
     const result = net(sb, ["check"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  network oi-sandbox/);
-    assert.match(result.stdout, /FAIL  DOCKER-USER has no jump/);
-    assert.match(result.stdout, /FAIL  boot unit polytronx-sandbox-network\.service is not owned and enabled/);
+    assert.match(result.stdout, /FAIL {2}network oi-sandbox/);
+    assert.match(result.stdout, /FAIL {2}DOCKER-USER has no jump/);
+    assert.match(result.stdout, /FAIL {2}boot unit polytronx-sandbox-network\.service is not owned and enabled/);
   });
 });

@@ -90,7 +90,7 @@ describe("workspace-slots.sh --apply refuses and changes nothing", () => {
     writeFileSync(image(h, 2), "");
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  slot 2: image .* holds no ext4 filesystem/);
+    assert.match(result.stdout, /FAIL {2}slot 2: image .* holds no ext4 filesystem/);
     assert.deepEqual(mutations(h), []);
     assert.equal(readFileSync(h.fstab, "utf8"), DEFAULT_FSTAB);
   });
@@ -100,7 +100,7 @@ describe("workspace-slots.sh --apply refuses and changes nothing", () => {
     writeFileSync(h.fstab, `${DEFAULT_FSTAB}${image(h, 4)} ${slotDir(h, 4)} ext4 defaults 0 0\n`);
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  slot 4: fstab differs/);
+    assert.match(result.stdout, /FAIL {2}slot 4: fstab differs/);
     assert.deepEqual(mutations(h), []);
   });
 
@@ -110,7 +110,7 @@ describe("workspace-slots.sh --apply refuses and changes nothing", () => {
     writeFileSync(h.fstab, `${DEFAULT_FSTAB}${oldLine}`);
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  slot 0: fstab differs/);
+    assert.match(result.stdout, /FAIL {2}slot 0: fstab differs/);
     assert.deepEqual(mutations(h), []);
     assert.equal(readFileSync(h.fstab, "utf8"), `${DEFAULT_FSTAB}${oldLine}`);
   });
@@ -121,7 +121,7 @@ describe("workspace-slots.sh --apply refuses and changes nothing", () => {
     writeFileSync(join(slotDir(h, 1), "stray.txt"), "data");
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  slot 1: directory .* is not empty/);
+    assert.match(result.stdout, /FAIL {2}slot 1: directory .* is not empty/);
     assert.deepEqual(mutations(h), []);
   });
 
@@ -129,7 +129,7 @@ describe("workspace-slots.sh --apply refuses and changes nothing", () => {
     const h = scratchHost({ freeGiB: 50 });
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  -?\d+ GiB free on .* after allocation; 30 GiB must stay free/);
+    assert.match(result.stdout, /FAIL {2}-?\d+ GiB free on .* after allocation; 30 GiB must stay free/);
     // Empty base directories are created before this check; no image, format, mount or fstab change is.
     assert.deepEqual(stubCalls(h.sb).filter((line) => /^(fallocate|mkfs\.ext4|mount)\b/.test(line)), []);
     assert.equal(readFileSync(h.fstab, "utf8"), DEFAULT_FSTAB);
@@ -153,7 +153,7 @@ describe("workspace-slots.sh --check", () => {
     writeFileSync(join(h.state, "stat", slotDir(h, 3).replace(/[/:]/g, "%")), "0 0 700\n");
     const result = run(h, ["--check"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  slot 3: .*root is not 1000:1000 mode 700/);
+    assert.match(result.stdout, /FAIL {2}slot 3: .*root is not 1000:1000 mode 700/);
     for (const k of [0, 1, 2, 4, 5]) assert.match(result.stdout, new RegExp(`PASS  slot ${k}: `));
   });
 
@@ -163,7 +163,7 @@ describe("workspace-slots.sh --check", () => {
     rmSync(join(h.state, "mounted", "2"));
     const result = run(h, ["--check"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL  slot 2: image ok; fstab ok; mount unmounted/);
+    assert.match(result.stdout, /FAIL {2}slot 2: image ok; fstab ok; mount unmounted/);
   });
 });
 

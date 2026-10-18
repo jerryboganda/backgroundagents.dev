@@ -24,7 +24,7 @@ from sandbox_runtime.types import SandboxStatus
 from ..app import app
 from ..app_config import APP_NAME
 from ..images.base import base_image
-from .capacity import read_max_active_sandboxes
+from .capacity import read_max_active_sandboxes, require_creation_allowed
 from .launch_policy import (
     docker_allocation_name,
     docker_allocation_tags,
@@ -87,6 +87,7 @@ async def _create_sandbox(
     create_kwargs: dict[str, Any], *, repository_image: bool
 ) -> modal.Sandbox:
     """Only a missing repository image at create time is classified as unavailable."""
+    require_creation_allowed()
     try:
         return await modal.Sandbox.create.aio(
             "python", "-m", "sandbox_runtime.entrypoint", **create_kwargs
@@ -276,6 +277,8 @@ class SandboxLauncher:
     ) -> tuple[modal.Sandbox, bool]:
         """Create a named VM or adopt only the allocation owned by this generation."""
         if retire_sandbox_id:
+            # A replacement creates, so refuse before the old allocation is terminated.
+            require_creation_allowed()
             await self._retire_docker_allocation(session_id, retire_sandbox_id)
         name = docker_allocation_name(session_id)
         tags = docker_allocation_tags(session_id, sandbox_id)

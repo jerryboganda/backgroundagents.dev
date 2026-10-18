@@ -10,6 +10,22 @@ import { describe, it } from "node:test";
 import { BASH, DEPLOY_DIR, REPO_ROOT, makeSandbox, runScript, runSnippet, stubCalls, writeRelease } from "./test-harness.mjs";
 
 const HEALTHY = '{"success":true,"data":{"status":"healthy","max_active_sandboxes":2,"capacity_enforcement":"pre-create"}}';
+const WORKFLOW = readFileSync(`${REPO_ROOT}/.github/workflows/polytronx-openinspect.yml`, "utf8");
+
+/** The shell script of one workflow step, with the YAML block indentation removed. */
+function workflowStep(name) {
+  const lines = WORKFLOW.split(/\r?\n/);
+  const start = lines.indexOf(`      - name: ${name}`);
+  assert.notEqual(start, -1, `no step named ${name}`);
+  const run = lines.indexOf("        run: |", start);
+  assert.notEqual(run, -1, `step ${name} has no run block`);
+  const body = [];
+  for (const line of lines.slice(run + 1)) {
+    if (line !== "" && !line.startsWith(" ".repeat(10))) break;
+    body.push(line.slice(10));
+  }
+  return body.join("\n");
+}
 
 /** Runs provider_cap_problem against a control-plane.env with the given lines, and a stubbed curl. */
 function capGate(sb, { controlPlane = "MODAL_WORKSPACE=acme\n", expect = "2", body = HEALTHY, code = "200", curlExit = "0" } = {}) {
@@ -158,42 +174,35 @@ describe("periodic backup age", () => {
 });
 
 describe("overlay allowlist in the release workflow", () => {
-  const workflow = readFileSync(`${REPO_ROOT}/.github/workflows/polytronx-openinspect.yml`, "utf8");
-  const allowed = /allowed='([^']+)'/.exec(workflow)[1];
+  const allowed = /allowed='([^']+)'/.exec(WORKFLOW)[1];
   // Stands in for git in the step: `git diff` prints the paths under test, and the other calls succeed.
   const gitDiffStub = `#!/usr/bin/env bash
 if [ "$1" = diff ] && [ -n "$CHANGED_PATHS" ]; then printf '%s\\n' "$CHANGED_PATHS"; fi
 exit 0
 `;
 
-  /** The shell script of one workflow step, with the YAML block indentation removed. */
-  function workflowStep(name) {
-    const lines = workflow.split(/\r?\n/);
-    const start = lines.indexOf(`      - name: ${name}`);
-    assert.notEqual(start, -1, `no step named ${name}`);
-    const run = lines.indexOf("        run: |", start);
-    assert.notEqual(run, -1, `step ${name} has no run block`);
-    const body = [];
-    for (const line of lines.slice(run + 1)) {
-      if (line !== "" && !line.startsWith(" ".repeat(10))) break;
-      body.push(line.slice(10));
-    }
-    return body.join("\n");
-  }
-
   /** Runs the workflow's own pin-and-overlay step with `paths` as the committed diff. */
-  function runAdmission(paths) {
+  function runAdmission(paths, pin = "a".repeat(40)) {
     const sb = makeSandbox();
     mkdirSync(`${sb.root}/deploy/polytronx`, { recursive: true });
-    writeFileSync(`${sb.root}/deploy/polytronx/pins.env`, `UPSTREAM_REVISION=${"a".repeat(40)}\n`);
+    writeFileSync(`${sb.root}/deploy/polytronx/pins.env`, `UPSTREAM_REVISION=${pin}\n`);
     writeFileSync(`${sb.bin}/git`, gitDiffStub);
     chmodSync(`${sb.bin}/git`, 0o755);
     return runSnippet(sb, workflowStep("Check the upstream pin and the overlay"), { CHANGED_PATHS: paths.join("\n") });
   }
 
-  /** The paths the workflow's step refuses, credential or allowlist, in the order given. */
-  function refused(paths) {
-    const printed = runAdmission(paths).stdout.split("\n");
+  /**
+   * The paths the workflow's step refuses, credential or allowlist, in the order given. A step that
+   * stops before the allowlist prints no path, so it fails here instead of reading as an admission.
+   */
+  function refused(paths, pin) {
+    const result = runAdmission(paths, pin);
+    assert.match(
+      result.stdout,
+      /intact; \d+ overlay path|credential paths differ from the upstream pin|paths differ from the upstream pin outside the overlay/,
+      `the step stopped before the allowlist (status ${result.status}):\n${result.stdout}${result.stderr}`,
+    );
+    const printed = result.stdout.split("\n");
     return paths.filter((path) => printed.includes(path));
   }
 
@@ -205,6 +214,15 @@ exit 0
     });
     return result.stdout.split("\n").filter(Boolean);
   }
+
+  it("does not read a step that stops before the allowlist as an admission", () => {
+    // A pin that is not a commit ends the step before any path is checked, so it prints no path.
+    const paths = ["packages/web/src/components/button.tsx"];
+    const stopped = runAdmission(paths, "not-a-commit");
+    assert.equal(stopped.status, 1, stopped.stdout);
+    assert.match(stopped.stdout, /not a full commit/);
+    assert.throws(() => refused(paths, "not-a-commit"), /stopped before the allowlist/);
+  });
 
   it("admits exactly the 0090 migration, the secrets editor, and the secrets-validation and sandbox-env files, each by its full path", () => {
     // Exact paths, no directory prefix: a file beside them is refused until it is listed too.
@@ -531,6 +549,14 @@ exit 0
     assert.deepEqual(refused(credentials), credentials);
   });
 
+  it("refuses any other *.env under the overlay, in any letter case, and admits only the exact pins.env", () => {
+    // The allowlist alone admits these, so the credential guard is what refuses them.
+    const envFiles = ["deploy/polytronx/backup.env", "deploy/polytronx/Backup.ENV", "packages/vps-executor/executor.env"];
+    assert.deepEqual(refusedByAllowlist(envFiles), [], "the allowlist alone would admit these");
+    assert.deepEqual(refused(envFiles), envFiles);
+    assert.deepEqual(refused(["deploy/polytronx/pins.env"]), []);
+  });
+
   it("refuses credential paths at the root, and root near misses of the template", () => {
     const root = [".env", ".env.local", ".env.production", ".env.examples", ".env.example.bak", ".dev.vars", "pins.env"];
     assert.deepEqual(refused(root), root);
@@ -605,6 +631,52 @@ exit 0
     ];
     assert.deepEqual(refused(neighbours), neighbours);
   });
+
+  it("admits exactly the team secrets store test and the modal launch, recovery and docker launch files, each by its full path", () => {
+    // Exact paths, no directory prefix: a file beside them is refused until it is listed too.
+    assert.deepEqual(refused([
+      "packages/control-plane/test/integration/team-secrets-store.test.ts",
+      "packages/modal-infra/src/sandbox/launch_policy.py",
+      "packages/modal-infra/src/sandbox/vm_recovery.py",
+      "packages/modal-infra/tests/test_docker_launch.py",
+    ]), []);
+  });
+
+  it("refuses the neighbours of the team secrets store test and the modal launch, recovery and docker launch files", () => {
+    const neighbours = [
+      "packages/control-plane/test/integration/team-secrets-store.test.ts.orig",
+      "packages/control-plane/test/integration/team-secrets-store.test.tsx",
+      "packages/control-plane/test/integration/team-secrets-store.ts",
+      "packages/control-plane/test/integration/team-secrets-store.spec.ts",
+      "packages/control-plane/test/integration/Team-Secrets-Store.test.ts",
+      "packages/control-plane/test/team-secrets-store.test.ts",
+      "packages/modal-infra/src/sandbox/launch_policy.py.orig",
+      "packages/modal-infra/src/sandbox/launch_policy_helpers.py",
+      "packages/modal-infra/src/sandbox/vm_recovery.py.bak",
+      "packages/modal-infra/src/sandbox/vm_recovery.pyi",
+      "packages/modal-infra/src/sandbox/Vm_Recovery.py",
+      "packages/modal-infra/src/vm_recovery.py",
+      "packages/modal-infra/tests/test_docker_launch.py.bak",
+      "packages/modal-infra/tests/test_docker_launch_extra.py",
+      "packages/modal-infra/tests/test_docker.py",
+      "x/packages/modal-infra/tests/test_docker_launch.py",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
+  it("refuses credential paths beside the team secrets store test and the modal launch and recovery files", () => {
+    const credentials = [
+      "packages/control-plane/test/integration/team-secrets-store.test.ts.pem",
+      "packages/control-plane/test/integration/.env.team",
+      "packages/modal-infra/src/sandbox/launch_policy.py.tfstate",
+      "packages/modal-infra/src/sandbox/vm_recovery.env",
+      "packages/modal-infra/tests/secrets/test_docker_launch.py",
+    ];
+    const result = runAdmission(credentials);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stdout, /credential paths differ from the upstream pin/);
+    assert.deepEqual(refused(credentials), credentials);
+  });
 });
 
 describe("operational files stay LF in every checkout", () => {
@@ -640,12 +712,26 @@ describe("release job gating in the workflow", () => {
   it("the images job needs every other job, so a failed check cannot still produce the artifact", () => {
     const workflow = readFileSync(`${REPO_ROOT}/.github/workflows/polytronx-openinspect.yml`, "utf8");
     const jobs = workflow.slice(workflow.indexOf("\njobs:"));
-    const jobNames = [...jobs.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((match) => match[1]);
-    const needs = /^    needs: \[([^\]]*)\]$/m.exec(jobs.slice(jobs.indexOf("\n  images:")))[1];
+    const jobNames = [...jobs.matchAll(/^ {2}([a-z][a-z-]*):$/gm)].map((match) => match[1]);
+    const needs = /^ {4}needs: \[([^\]]*)\]$/m.exec(jobs.slice(jobs.indexOf("\n  images:")))[1];
     assert.deepEqual(
       needs.split(",").map((name) => name.trim()).sort(),
       jobNames.filter((name) => name !== "images").sort(),
     );
+  });
+});
+
+describe("web image build in the release workflow", () => {
+  const step = workflowStep("Build the web image");
+
+  it("passes NEXT_PUBLIC_SANDBOX_PROVIDER=vps explicitly, once, so the Dockerfile's modal default is never used", () => {
+    assert.match(step, /^ +--build-arg NEXT_PUBLIC_SANDBOX_PROVIDER=vps \\$/m);
+    assert.equal((step.match(/NEXT_PUBLIC_SANDBOX_PROVIDER=/g) ?? []).length, 1);
+  });
+
+  it("takes NEXT_PUBLIC_WS_URL from pins.env, which names the wss control-plane host", () => {
+    assert.match(step, /^ +--build-arg NEXT_PUBLIC_WS_URL="\$PUBLIC_WS_URL" \\$/m);
+    assert.match(readFileSync(`${DEPLOY_DIR}/pins.env`, "utf8"), /^PUBLIC_WS_URL=wss:\/\/cp\.ai\.polytronx\.com$/m);
   });
 });
 
@@ -727,7 +813,7 @@ describe("executor edge CA: the control plane mount and preflight", () => {
   }
 
   it("mounts the public CA read-only, in long syntax, and names the same path for NODE_EXTRA_CA_CERTS", () => {
-    assert.match(app, /^      - type: bind\n        source: \$\{POLYTRONX_EXECUTOR_CA_FILE:\?[^\n]+\}\n        target: \/etc\/polytronx\/executor-ca\/ca\.crt\n        read_only: true\n        bind:\n          create_host_path: false$/m);
+    assert.match(app, /^ {6}- type: bind\n {8}source: \$\{POLYTRONX_EXECUTOR_CA_FILE:\?[^\n]+\}\n {8}target: \/etc\/polytronx\/executor-ca\/ca\.crt\n {8}read_only: true\n {8}bind:\n {10}create_host_path: false$/m);
     assert.doesNotMatch(app, /executor-ca\/ca\.crt:ro/, "the short form cannot set create_host_path");
     assert.match(app, /NODE_EXTRA_CA_CERTS: \/etc\/polytronx\/executor-ca\/ca\.crt$/m);
   });

@@ -5,10 +5,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
   BASH,
+  DEPLOY_DIR,
   EXECUTOR_CA_PATH,
   HAS_FLOCK,
   LIVE_SECRETS,
@@ -428,5 +429,126 @@ describe("restore-rehearsal.sh live-restore refusals", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /rehearsal volumes already exist; rerun with --reset/);
     assert.equal(composeCalls(sb).length, 0, "no compose call may run before the refusal");
+  });
+});
+
+describe("control-plane.env.template defaults to the VPS executor", () => {
+  const template = readFileSync(`${DEPLOY_DIR}/templates/control-plane.env.template`, "utf8").replace(/\r\n/g, "\n");
+  const values = new Map([...template.matchAll(/^([A-Z][A-Z0-9_]*)=(.*)$/gm)].map(([, key, value]) => [key, value]));
+
+  // The control-plane.env keys preflight.sh requires: the words after its check_secrets call, joined by backslashes.
+  const preflight = readFileSync(`${DEPLOY_DIR}/preflight.sh`, "utf8").replace(/\r\n/g, "\n");
+  const [, preflightWords] = /^check_secrets control-plane\.env ((?:.*\\\n)*.*)$/m.exec(preflight);
+  const preflightKeys = preflightWords.replace(/\\\n/g, " ").trim().split(/\s+/);
+  // Each provider's keys are one line of preflight.sh: `vps) provider_keys="..."`.
+  const providerKeys = (provider) => new RegExp(`${provider}\\) provider_keys="([^"]*)"`).exec(preflight)[1].split(" ");
+
+  it("selects the VPS provider at the executor's public URL, with no Modal setting", () => {
+    assert.equal(values.get("SANDBOX_PROVIDER"), "vps");
+    assert.equal(values.get("VPS_EXECUTOR_URL"), "https://172.235.26.148:19443");
+    assert.deepEqual([...values.keys()].filter((key) => key.startsWith("MODAL_")), []);
+  });
+
+  it("leaves the two secrets shared with the executor as placeholders the operator replaces", () => {
+    for (const key of ["VPS_EXECUTOR_TOKEN", "VPS_EXECUTOR_ADMISSION_SECRET"]) {
+      assert.match(values.get(key) ?? "", /^REPLACE_/, key);
+    }
+  });
+
+  it("keeps admission closed, with the owner on the allowlist", () => {
+    assert.equal(values.get("UNSAFE_ALLOW_ALL_USERS"), "false");
+    assert.equal(values.get("ALLOWED_USERS"), "jerryboganda");
+  });
+
+  it("carries every shared control-plane.env key preflight requires", () => {
+    const missing = preflightKeys.filter((key) => /^[A-Z]/.test(key) && !values.has(key));
+    assert.deepEqual(missing, []);
+  });
+
+  it("carries every key the VPS branch of preflight requires", () => {
+    assert.deepEqual(providerKeys("vps").filter((key) => !values.has(key)), []);
+  });
+});
+
+describe("preflight.sh checks only the sandbox provider it is configured for", () => {
+  const readTemplate = (name) => readFileSync(`${DEPLOY_DIR}/templates/${name}.env.template`, "utf8").replace(/\r\n/g, "\n");
+  // Each REPLACE_* value becomes a dummy, so a template stands in for a filled-in file.
+  const fill = (text) => text.replace(/^([A-Z][A-Z0-9_]*)=REPLACE_.*$/gm, "$1=test-value");
+  const controlPlane = fill(readTemplate("control-plane"));
+  const web = fill(readTemplate("web"));
+  const modalControlPlane = `${controlPlane.replace(/^SANDBOX_PROVIDER=vps$/m, "SANDBOX_PROVIDER=modal")}MODAL_WORKSPACE=acme\nMODAL_API_SECRET=test-value\n`;
+  const modalWeb = web.replace(/^SANDBOX_PROVIDER=vps$/m, "SANDBOX_PROVIDER=modal");
+  const HEALTHY = '{"success":true,"data":{"status":"healthy","max_active_sandboxes":2,"capacity_enforcement":"pre-create"}}';
+  const curlCalls = (sb) => stubCalls(sb).filter((line) => line.startsWith("curl "));
+
+  /** Runs the real preflight.sh on these control-plane.env and web.env texts; returns the sandbox and its output lines. */
+  function runPreflight({ cp = controlPlane, webEnv = web, env = {} } = {}) {
+    const sb = makeSandbox();
+    for (const [name, text] of [["control-plane.env", cp], ["web.env", webEnv]]) {
+      writeFileSync(`${sb.secrets}/${name}`, text);
+      chmodSync(`${sb.secrets}/${name}`, 0o600);
+    }
+    const release = writeRelease(sb);
+    // The Windows stat shim answers 600 for every path, so the file-mode checks pass there too.
+    const result = runScript(sb, "preflight.sh", ["--release", release, "--secrets-dir", sb.secrets, "--source", sb.root], {
+      STUB_STAT_MODE: "600",
+      ...env,
+    });
+    return { sb, lines: result.stdout.split("\n") };
+  }
+
+  it("passes the VPS provider checks with no Modal key, no cap call and no Modal line", () => {
+    const { sb, lines } = runPreflight();
+    assert.ok(lines.includes("PASS  control-plane.env has every required key"), lines.join("\n"));
+    assert.ok(lines.includes("PASS  web SANDBOX_PROVIDER matches the control plane's"), lines.join("\n"));
+    assert.ok(lines.includes("PASS  sandbox provider is vps: no Modal provider cap gate applies"), lines.join("\n"));
+    assert.deepEqual(lines.filter((line) => /MODAL|^(PASS|FAIL)\s+provider /.test(line)), []);
+    assert.deepEqual(curlCalls(sb), []);
+  });
+
+  it("fails a VPS deployment that lacks any executor key, naming the key", () => {
+    for (const key of ["VPS_EXECUTOR_URL", "VPS_EXECUTOR_TOKEN", "VPS_EXECUTOR_ADMISSION_SECRET"]) {
+      const { lines } = runPreflight({ cp: controlPlane.replace(new RegExp(`^${key}=.*\\n`, "m"), "") });
+      assert.ok(lines.includes(`FAIL  control-plane.env has no value for ${key}`), key);
+    }
+  });
+
+  it("keeps the Modal keys and the cap gate for a Modal deployment", () => {
+    const { sb, lines } = runPreflight({ cp: modalControlPlane, webEnv: modalWeb, env: { STUB_CURL_BODY: HEALTHY, STUB_CURL_CODE: "200" } });
+    assert.ok(lines.includes("PASS  provider reports max_active_sandboxes=2 with pre-create enforcement"), lines.join("\n"));
+    assert.deepEqual(curlCalls(sb).map((line) => line.split(" ").pop()), ["https://acme--open-inspect-api-health.modal.run"]);
+    const noSecret = runPreflight({ cp: modalControlPlane.replace(/^MODAL_API_SECRET=.*\n/m, ""), webEnv: modalWeb });
+    assert.ok(noSecret.lines.includes("FAIL  control-plane.env has no value for MODAL_API_SECRET"), noSecret.lines.join("\n"));
+  });
+
+  it("refuses a Modal provider that reports another cap, as the gate always has", () => {
+    const { lines } = runPreflight({
+      cp: modalControlPlane,
+      webEnv: modalWeb,
+      env: { STUB_CURL_BODY: HEALTHY.replace('"max_active_sandboxes":2', '"max_active_sandboxes":20'), STUB_CURL_CODE: "200" },
+    });
+    assert.ok(lines.includes("FAIL  provider cap gate: provider does not report max_active_sandboxes=2; the deploy stops before provisioning is enabled"), lines.join("\n"));
+  });
+
+  it("fails closed on an absent or unsupported SANDBOX_PROVIDER, without calling a provider", () => {
+    for (const value of [null, "daytona", "VPS"]) {
+      const cp = value === null
+        ? controlPlane.replace(/^SANDBOX_PROVIDER=.*\n/m, "")
+        : controlPlane.replace(/^SANDBOX_PROVIDER=vps$/m, `SANDBOX_PROVIDER=${value}`);
+      const { sb, lines } = runPreflight({ cp });
+      assert.ok(lines.includes("FAIL  SANDBOX_PROVIDER in control-plane.env must be vps or modal; no other provider is supported"), String(value));
+      assert.deepEqual(curlCalls(sb), [], String(value));
+    }
+  });
+
+  it("fails when the web selects another provider than the control plane", () => {
+    const { lines } = runPreflight({ webEnv: web.replace(/^SANDBOX_PROVIDER=vps$/m, "SANDBOX_PROVIDER=modal") });
+    assert.ok(lines.includes("FAIL  web SANDBOX_PROVIDER must be set and equal the control plane's SANDBOX_PROVIDER"), lines.join("\n"));
+  });
+
+  it("selects the VPS provider in both the web and control-plane templates", () => {
+    for (const name of ["control-plane", "web"]) {
+      assert.match(readTemplate(name), /^SANDBOX_PROVIDER=vps$/m, name);
+    }
   });
 });

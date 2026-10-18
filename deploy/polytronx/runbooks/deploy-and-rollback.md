@@ -63,9 +63,19 @@ web/control-plane secret hash match without printing a value.
 Every line must read PASS or WARN. A single FAIL stops the deploy, and nothing changes. Read each
 WARN and decide whether it is acceptable.
 
-The provider cap line needs the Modal app deployed first, with `MAX_ACTIVE_SANDBOXES=2`
+The provider cap line applies to Modal only, when `SANDBOX_PROVIDER=modal` in `control-plane.env`.
+It needs the Modal app deployed first, with `MAX_ACTIVE_SANDBOXES=2`
 (`runbooks/accounts-and-admission.md`, section 4). preflight makes one unauthenticated GET of the
 provider's `api-health`, and sends no credential.
+
+With `SANDBOX_PROVIDER=vps`, preflight prints
+`sandbox provider is vps: no Modal provider cap gate applies`. Prove the VPS cap of 2 on the
+executor host instead, with existing commands only: set `EXECUTOR_MAX_ACTIVE_SANDBOXES=2` in
+`executor-release.env` (`runbooks/executor-host.md`, section 2, steps 2 and 3), and the executor
+preflight must PASS `at most 2 sandbox(es) at once`. Then run the capacity check
+(`runbooks/executor-host.md`, section 3, step 6) with two sandboxes, only with the operator's
+go-ahead. The executor does not enforce the cap itself (`runbooks/executor-host.md`, section 5), so
+this proves the configured value and the host's headroom.
 
 ## 6. Deploy
 

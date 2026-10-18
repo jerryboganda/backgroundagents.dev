@@ -363,15 +363,23 @@ describe("TeamSecretsStore", () => {
     expect(await secretAudits()).toEqual([]);
   });
 
-  it.each(["bad-key", "PATH", ""])(
-    "validates delete key %j before mutating or auditing",
-    async (key) => {
-      await expect(store.deleteSecret(teamId, key, AUDIT)).rejects.toBeInstanceOf(
-        SecretsValidationError
-      );
-      expect(await secretAudits()).toEqual([]);
-    }
-  );
+  it.each(["bad-key", ""])("validates delete key %j before mutating or auditing", async (key) => {
+    await expect(store.deleteSecret(teamId, key, AUDIT)).rejects.toBeInstanceOf(
+      SecretsValidationError
+    );
+    expect(await secretAudits()).toEqual([]);
+  });
+
+  it("deletes a legacy row stored under a name that is now reserved", async () => {
+    await env.DB.prepare(
+      "INSERT INTO team_secrets (team_id, key, encrypted_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+    )
+      .bind(teamId, "PYTHONPATH", "ciphertext", 1, 1)
+      .run();
+    expect(await store.deleteSecret(teamId, "PYTHONPATH", AUDIT)).toBe(true);
+    expect(await store.listSecretKeys(teamId)).toEqual([]);
+    expect(await secretAudits()).toHaveLength(1);
+  });
 
   it("validates database metadata, encrypted rows, and existing keys with Zod", async () => {
     await store.setSecrets(teamId, { TOKEN: "value" });

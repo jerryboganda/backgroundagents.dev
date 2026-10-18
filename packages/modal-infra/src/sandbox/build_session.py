@@ -25,6 +25,7 @@ from sandbox_runtime.repo_image_callback import (
 from ..app import app
 from ..app_config import APP_NAME
 from ..images.base import base_image
+from .capacity import require_creation_allowed
 from .launch_policy import (
     ModalBackend,
     _identity_digest,
@@ -78,7 +79,7 @@ class ModalBuildSessionService:
         build_id: str,
         scope_kind: str,
         scope_id: str,
-        repositories: list[dict],
+        repositories: list[dict[str, str]],
         callback_url: str,
         failure_callback_url: str,
         clone_host: str,
@@ -141,6 +142,7 @@ class ModalBuildSessionService:
         if sandbox is not None and await sandbox.get_tags.aio() != tags:
             raise RuntimeError("Build allocation ownership mismatch")
         if sandbox is None:
+            require_creation_allowed()
             try:
                 sandbox = await modal.Sandbox.create.aio(
                     *command,
