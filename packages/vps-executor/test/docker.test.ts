@@ -494,6 +494,30 @@ describe("createDockerRuntime", () => {
     assert.deepEqual(inventory.owned, []);
   });
 
+  it("reads docker's creation time and state, and omits them when the listing has none or a time it cannot read", async () => {
+    const labels = "open-inspect.managed=vps-executor,open-inspect.sandbox-id=sandbox-1";
+    const row = (extra: Record<string, unknown>) =>
+      JSON.stringify({ ID: CONTAINER_ID, Names: "oi-sandbox-1", Labels: labels, ...extra });
+    for (const [extra, expected] of [
+      [
+        { CreatedAt: "2026-10-18 20:25:01 +0500 PKT", State: "running" },
+        { createdAtMs: Date.parse("2026-10-18T15:25:01Z"), state: "running" },
+      ],
+      [
+        { CreatedAt: "2026-10-18 15:25:01.123456789 +0000 UTC", State: "exited" },
+        { createdAtMs: Date.parse("2026-10-18T15:25:01Z"), state: "exited" },
+      ],
+      [{ CreatedAt: "yesterday" }, {}],
+      [{}, {}],
+    ] as const) {
+      const docker = fakeDocker(() => ({ stdout: `${row(extra)}\n` }));
+      const { owned } = await runtimeWith(docker.exec).inventory();
+      assert.deepEqual(owned, [
+        { containerId: CONTAINER_ID, sandboxId: "sandbox-1", workspaceSlot: null, ...expected },
+      ]);
+    }
+  });
+
   it("refuses a listing it cannot read, and passes a failed listing through", async () => {
     const garbled = fakeDocker(() => ({ stdout: "not json\n" }));
     await assert.rejects(runtimeWith(garbled.exec).inventory());

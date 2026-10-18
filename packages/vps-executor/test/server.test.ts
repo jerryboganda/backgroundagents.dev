@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { admissionSignature } from "../src/admission.ts";
 import {
+  ContainerNotFoundError,
   containerName,
   createDockerRuntime,
   SESSION_CONTEXT_ACCEPTED_LINE,
@@ -15,6 +16,7 @@ import {
   type DockerRuntime,
   type SpawnDocker,
 } from "../src/docker.ts";
+import { reapStaleContainers } from "../src/reaper.ts";
 import { createExecutorServer, reconcileContainers } from "../src/server.ts";
 import { MAX_ALLOCATED_SANDBOXES, openStateStore, type StateStore } from "../src/state.ts";
 import { resetSlot, WORKSPACE_SLOT_COUNT } from "../src/workspace.ts";
@@ -2867,5 +2869,217 @@ describe("reconciliation of a removed container and a reattached slot", () => {
         assert.equal(executor.store.byLease("lease-1")?.status, "unresolved");
       });
     }
+  });
+});
+
+describe("sweep of stale containers", () => {
+  const LIMITS = { maxLifetimeMs: 3_600_000, deadGraceMs: 600_000 };
+  const sweep = (executor: Executor, runtime: DockerRuntime, inFlight = new Set<string>()) =>
+    reapStaleContainers(executor.store, runtime, () => NOW, inFlight, LIMITS);
+
+  /** The runtime, with every owned container listed as created `ageMs` before NOW and in docker state `state`. */
+  function aged(executor: Executor, ageMs: number, state = "running"): DockerRuntime {
+    return {
+      ...executor.runtime,
+      inventory: async () => {
+        const inventory = await executor.runtime.inventory();
+        const owned = inventory.owned.map((c) => ({ ...c, createdAtMs: NOW - ageMs, state }));
+        return { ...inventory, owned };
+      },
+    };
+  }
+
+  it("removes a sandbox past its lifetime, frees its slot, and keeps its lease spent", async () => {
+    await withExecutor(async (executor) => {
+      const providerObjectId = await createSandbox(executor);
+      assert.equal(executor.store.occupancy(), 1);
+      assert.deepEqual(await sweep(executor, aged(executor, 3_600_001)), { reaped: 1, failed: 0 });
+      assert.ok(
+        executor.docker.calls.some(([command, , id]) => command === "rm" && id === providerObjectId)
+      );
+      assert.equal(executor.store.occupancy(), 0);
+      // A retried create under the spent lease is refused, as after a stop.
+      const again = await request(executor, "POST", "/v1/sandboxes", { body: CREATE });
+      assert.equal(again.status, 403);
+      assert.deepEqual(await sweep(executor, executor.runtime), { reaped: 0, failed: 0 });
+    });
+  });
+
+  it("leaves a sandbox within its lifetime, one with no readable age, and a create still in flight", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      assert.deepEqual(await sweep(executor, aged(executor, 3_599_999)), { reaped: 0, failed: 0 });
+      assert.deepEqual(await sweep(executor, executor.runtime), { reaped: 0, failed: 0 });
+      assert.deepEqual(await sweep(executor, aged(executor, 9_999_999), new Set(["lease-1"])), {
+        reaped: 0,
+        failed: 0,
+      });
+      assert.equal(executor.store.occupancy(), 1);
+    });
+  });
+
+  it("removes a container that is not running only after the grace", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      assert.deepEqual(await sweep(executor, aged(executor, 600_000, "exited")), {
+        reaped: 0,
+        failed: 0,
+      });
+      assert.deepEqual(await sweep(executor, aged(executor, 600_001, "exited")), {
+        reaped: 1,
+        failed: 0,
+      });
+      assert.equal(executor.store.occupancy(), 0);
+    });
+  });
+
+  it("keeps the record when docker cannot remove the container, and removes it on the next pass", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      executor.docker.removeFails = true;
+      assert.deepEqual(await sweep(executor, aged(executor, 4_000_000)), { reaped: 0, failed: 1 });
+      assert.equal(executor.store.occupancy(), 1);
+      executor.docker.removeFails = false;
+      assert.deepEqual(await sweep(executor, aged(executor, 4_000_000)), { reaped: 1, failed: 0 });
+      assert.equal(executor.store.occupancy(), 0);
+    });
+  });
+
+  it("does not reap at exactly the maximum lifetime, only past it", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      assert.deepEqual(await sweep(executor, aged(executor, 3_600_000)), { reaped: 0, failed: 0 });
+    });
+  });
+
+  it("leaves a container whose create is still running, which holds no container id yet", async () => {
+    await withExecutor(async (executor) => {
+      const admitted = executor.store.admit(
+        {
+          leaseToken: "lease-9",
+          sessionId: "session-9",
+          sandboxId: "sandbox-9",
+          status: "creating",
+          providerObjectId: null,
+          createdAtMs: NOW,
+        },
+        MAX_ALLOCATED_SANDBOXES
+      );
+      assert.equal(admitted.kind, "reserved");
+      const id = "9".repeat(64);
+      const runtime: DockerRuntime = {
+        ...executor.runtime,
+        inventory: async () => ({
+          containerIds: new Set([id]),
+          owned: [
+            {
+              containerId: id,
+              sandboxId: "sandbox-9",
+              workspaceSlot: 0,
+              createdAtMs: NOW - 9_000_000,
+              state: "running",
+            },
+          ],
+          fences: [],
+        }),
+      };
+      assert.deepEqual(await sweep(executor, runtime), { reaped: 0, failed: 0 });
+      assert.equal(
+        executor.docker.calls.some(([command]) => command === "rm"),
+        false
+      );
+    });
+  });
+
+  it("goes on after a failed state write, and reconciliation frees the record", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      const failing = {
+        ...executor.store,
+        terminate: () => {
+          throw new Error("disk full");
+        },
+      };
+      const result = await reapStaleContainers(
+        failing,
+        aged(executor, 4_000_000),
+        () => NOW,
+        new Set(),
+        LIMITS
+      );
+      assert.deepEqual(result, { reaped: 1, failed: 0 });
+      assert.equal(executor.store.occupancy(), 1);
+      await reconcileContainers(executor.store, executor.runtime, () => NOW);
+      assert.equal(executor.store.occupancy(), 0);
+    });
+  });
+
+  it("does not count a container docker had already removed", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      const gone: DockerRuntime = {
+        ...aged(executor, 4_000_000),
+        removeSandbox: async () => {
+          throw new ContainerNotFoundError();
+        },
+      };
+      assert.deepEqual(await sweep(executor, gone), { reaped: 0, failed: 0 });
+      assert.equal(executor.store.occupancy(), 0);
+    });
+  });
+
+  it("removes an owned container the state does not hold, and never a fence or a foreign container", async () => {
+    await withExecutor(async (executor) => {
+      const id = "f".repeat(64);
+      const removed: string[] = [];
+      const runtime: DockerRuntime = {
+        ...executor.runtime,
+        removeSandbox: async (containerId) => {
+          removed.push(containerId);
+        },
+        inventory: async () => ({
+          containerIds: new Set([id, "1".repeat(64)]),
+          owned: [
+            {
+              containerId: id,
+              sandboxId: "sandbox-9",
+              workspaceSlot: null,
+              createdAtMs: NOW - 4_000_000,
+              state: "running",
+            },
+          ],
+          fences: [{ containerId: "1".repeat(64), sandboxId: "sandbox-8" }],
+        }),
+      };
+      assert.deepEqual(await sweep(executor, runtime), { reaped: 1, failed: 0 });
+      assert.deepEqual(removed, [id]);
+    });
+  });
+
+  it("drops the unplaced row of an orphan it removes, so a stale listing cannot count it again", async () => {
+    await withExecutor(async (executor) => {
+      const id = "e".repeat(64);
+      executor.store.syncUnplaced([], [{ containerId: id, sandboxId: "sandbox-9" }]);
+      assert.equal(executor.store.isUnplaced(id), true);
+      const runtime: DockerRuntime = {
+        ...executor.runtime,
+        removeSandbox: async () => {},
+        inventory: async () => ({
+          containerIds: new Set([id]),
+          owned: [
+            {
+              containerId: id,
+              sandboxId: "sandbox-9",
+              workspaceSlot: null,
+              createdAtMs: NOW - 4_000_000,
+              state: "running",
+            },
+          ],
+          fences: [],
+        }),
+      };
+      assert.deepEqual(await sweep(executor, runtime), { reaped: 1, failed: 0 });
+      assert.equal(executor.store.isUnplaced(id), false);
+    });
   });
 });

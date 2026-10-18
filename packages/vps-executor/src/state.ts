@@ -190,7 +190,7 @@ export interface StateStore {
  *   create is abandoned. Without a container id, reconciliation attaches the owned container under its sandbox id,
  *   and an attached container is not running: the runtime never acknowledged it here. With a container id (a launch
  *   that failed, or an attach), the record names its container, and only a stop removes it. Nothing frees it by
- *   name, and nothing frees it on a timer.
+ *   name. The one timer that frees it is the stale sweep (reaper.ts), which removes the container first.
  * - running: the runtime accepted the session context, and docker reported the container id. Holds both slots until
  *   the container is verified gone.
  * - terminated: the container is verified gone. Holds no container slot, and stays as a tombstone so the lease stays spent.

@@ -46,6 +46,8 @@ services:
       VPS_EXECUTOR_IMAGE: ${EXECUTOR_SANDBOX_IMAGE:?EXECUTOR_SANDBOX_IMAGE must name the sandbox image by digest in executor-release.env}
       VPS_EXECUTOR_SANDBOX_CPUS: ${EXECUTOR_SANDBOX_CPUS:?EXECUTOR_SANDBOX_CPUS must set the CPU limit of each sandbox}
       VPS_EXECUTOR_SANDBOX_MEMORY: ${EXECUTOR_SANDBOX_MEMORY:?EXECUTOR_SANDBOX_MEMORY must set the memory limit of each sandbox}
+      # The stale sweep removes a sandbox running longer than this. Default: the control plane's two hours plus five minutes.
+      VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS: ${EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS:-7500}
       # Six 10 GiB slots, provisioned by workspace-slots.sh. The count is fixed here, not a setting:
       # the provisioned images and the executor must agree on it.
       VPS_EXECUTOR_WORKSPACE_ROOT: /srv/vps-ws/slots

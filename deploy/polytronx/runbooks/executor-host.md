@@ -124,7 +124,11 @@ Nothing in this runbook has been run against either host. Each step is for the o
    `https://`, and the executor refuses to start without it, so take it from the dashboard host's
    reviewed configuration rather than guessing. The six workspace slots and the executor state file
    are fixed in `compose.executor.yml`. Optional: `EXECUTOR_CPUS` (default 1) and
-   `EXECUTOR_MEM_LIMIT` (default 512m) limit the executor service itself.
+   `EXECUTOR_MEM_LIMIT` (default 512m) limit the executor service itself. Optional too:
+   `EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS` (default 7500, from 600 to 86400). The executor removes
+   any sandbox running longer than that, and any owned container that has not been running for 10
+   minutes, so a sandbox whose session was archived or lost never stays up. Keep it above the
+   longest session timeout the control plane allows.
 3. Preflight, alone, as root:
    ```
    sudo bash deploy/polytronx/preflight-executor.sh --release /opt/polytronx/executor/executor-release.env --secrets-dir /opt/polytronx/executor/secrets

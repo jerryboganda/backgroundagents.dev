@@ -1038,7 +1038,10 @@ describe("sandbox network", () => {
     writeFileSync(resolv, "nameserver 1.1.1.1\nnameserver 9.9.9.9\noptions ndots:0\n");
     assert.match(net(sb, ["check"]).stdout, /PASS {2}sandbox resolver file/);
     const script = readFileSync(`${DEPLOY_DIR}/sandbox-network.sh`, "utf8");
-    const executor = readFileSync(`${DEPLOY_DIR}/../../packages/vps-executor/src/docker.ts`, "utf8");
+    const executor = readFileSync(
+      `${DEPLOY_DIR}/../../packages/vps-executor/src/docker.ts`,
+      "utf8"
+    );
     const shellDefault = script.match(/POLYTRONX_RESOLV_CONF:-([^}]+)\}/)?.[1];
     assert.ok(shellDefault);
     assert.ok(executor.includes(`const RESOLV_CONF_SOURCE = "${shellDefault}";`));

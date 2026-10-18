@@ -170,6 +170,10 @@ export interface OwnedContainer {
   containerId: string;
   sandboxId: string;
   workspaceSlot: number | null;
+  /** When docker created it, or undefined when the listing gave no readable time. Age is judged from this alone. */
+  createdAtMs?: number;
+  /** Docker's state word (running, exited, dead, created, paused, restarting), when the listing gave one. */
+  state?: string;
 }
 
 /** A fence this executor placed under a sandbox id's name. It runs nothing, mounts nothing, and is never owned. */
@@ -428,14 +432,32 @@ interface ListedContainer {
   id: string;
   name: string;
   labels: Map<string, string>;
+  createdAtMs?: number;
+  state?: string;
 }
 
 function parseListing(line: string): ListedContainer {
   const entry: unknown = JSON.parse(line);
   if (entry === null || typeof entry !== "object") throw new Error(UNEXPECTED_LISTING);
-  const { ID, Names, Labels } = entry as Record<string, unknown>;
+  const { ID, Names, Labels, CreatedAt, State } = entry as Record<string, unknown>;
   if (typeof ID !== "string" || typeof Names !== "string") throw new Error(UNEXPECTED_LISTING);
-  return { id: ID, name: Names, labels: parseLabels(typeof Labels === "string" ? Labels : "") };
+  return {
+    id: ID,
+    name: Names,
+    labels: parseLabels(typeof Labels === "string" ? Labels : ""),
+    createdAtMs: typeof CreatedAt === "string" ? parseCreatedAt(CreatedAt) : undefined,
+    state: typeof State === "string" ? State : undefined,
+  };
+}
+
+/** Docker prints "2026-10-18 20:25:01 +0500 PKT": the offset is the usable part, the zone name is dropped. */
+function parseCreatedAt(text: string): number | undefined {
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? ([+-])(\d{2})(\d{2})\b/.exec(
+    text
+  );
+  if (match === null) return undefined;
+  const ms = Date.parse(`${match[1]}T${match[2]}${match[3]}${match[4]}:${match[5]}`);
+  return Number.isNaN(ms) ? undefined : ms;
 }
 
 /** Parses docker's "key=value,key=value" label text. */
@@ -463,7 +485,14 @@ function ownedContainerOf(listed: ListedContainer): OwnedContainer | undefined {
     slot !== undefined && SLOT_VALUE_PATTERN.test(slot) && Number(slot) < WORKSPACE_SLOT_COUNT
       ? Number(slot)
       : null;
-  return { containerId: listed.id, sandboxId, workspaceSlot };
+  return {
+    containerId: listed.id,
+    sandboxId,
+    workspaceSlot,
+    // Present only when the listing gave them, so a listing without them reads exactly as before.
+    ...(listed.createdAtMs === undefined ? {} : { createdAtMs: listed.createdAtMs }),
+    ...(listed.state === undefined ? {} : { state: listed.state }),
+  };
 }
 
 /**

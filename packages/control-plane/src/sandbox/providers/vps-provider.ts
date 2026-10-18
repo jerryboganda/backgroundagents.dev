@@ -211,7 +211,9 @@ export class VpsSandboxProvider implements SandboxProvider {
 
   /**
    * The reference a create persists before its call, so an ambiguous create resolves by sandbox id.
-   * The executor enforces no sandbox timeout, so the lifetime is the conservative start bound.
+   * The executor enforces one lifetime for every sandbox (VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS, default 2h5m) and the
+   * create carries no per-session timeout, so the lifetime is the conservative start bound. A session that asks for a
+   * longer timeout than that setting is removed at the setting.
    */
   pendingSandboxAllocation(
     config: Pick<

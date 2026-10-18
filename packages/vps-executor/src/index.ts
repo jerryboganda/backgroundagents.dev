@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { createDockerRuntime, type SandboxLimits } from "./docker.ts";
+import { DEFAULT_MAX_LIFETIME_MS, DEFAULT_REAP_LIMITS, reapStaleContainers } from "./reaper.ts";
 import { createExecutorServer, reconcileContainers } from "./server.ts";
 import { openStateStore } from "./state.ts";
 import { isWorkspaceRoot, WORKSPACE_SLOT_COUNT } from "./workspace.ts";
@@ -23,6 +24,8 @@ export interface ExecutorConfig {
   workspaceSlots: number;
   /** The control-plane origin sandboxes call back to. Creates must name exactly this. */
   controlPlaneUrl: string;
+  /** A sandbox running longer than this is removed by the periodic sweep. */
+  sandboxMaxLifetimeMs: number;
 }
 
 /**
@@ -58,6 +61,13 @@ export function readConfig(env: NodeJS.ProcessEnv): ExecutorConfig {
     throw new Error(
       `VPS_EXECUTOR_WORKSPACE_SLOTS must be an integer from 1 to ${WORKSPACE_SLOT_COUNT}`
     );
+  const lifetimeSeconds = Number(
+    env.VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS ?? DEFAULT_MAX_LIFETIME_MS / 1000
+  );
+  if (!Number.isInteger(lifetimeSeconds) || lifetimeSeconds < 600 || lifetimeSeconds > 86_400)
+    throw new Error(
+      "VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS must be an integer from 600 to 86400"
+    );
   return {
     token,
     admissionSecret,
@@ -74,6 +84,7 @@ export function readConfig(env: NodeJS.ProcessEnv): ExecutorConfig {
     workspaceRoot,
     workspaceSlots,
     controlPlaneUrl,
+    sandboxMaxLifetimeMs: lifetimeSeconds * 1000,
   };
 }
 
@@ -112,15 +123,18 @@ export async function main(env: NodeJS.ProcessEnv): Promise<void> {
   console.log(`vps-executor listening on ${config.host}:${config.port}`);
 
   // Reconciles at startup and then on a timer, so a container that appears late or disappears is
-  // accounted for even with no creates. A pass that is still running is not overlapped.
+  // accounted for even with no creates. The sweep that follows removes stale sandboxes, so none outlives its
+  // lifetime or sits dead even when the control plane never stops it. A pass that is still running is not overlapped.
+  const limits = { ...DEFAULT_REAP_LIMITS, maxLifetimeMs: config.sandboxMaxLifetimeMs };
   let reconciling = false;
   const reconcile = (): void => {
     if (reconciling) return;
     reconciling = true;
     reconcileContainers(store, runtime, Date.now, inFlight)
+      .then(() => reapStaleContainers(store, runtime, Date.now, inFlight, limits))
       .catch((error: unknown) => {
         const reason = error instanceof Error ? error.message : "unknown error";
-        console.error(`vps-executor: reconciliation failed: ${reason}`);
+        console.error(`vps-executor: reconciliation or sweep failed: ${reason}`);
       })
       .finally(() => {
         reconciling = false;

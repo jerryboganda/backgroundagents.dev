@@ -65,6 +65,26 @@ describe("readConfig", () => {
     assert.equal(config.controlPlaneUrl, CONTROL_PLANE_URL);
   });
 
+  it("bounds a sandbox's lifetime at two hours and five minutes by default, and refuses a value outside 10 minutes to a day", () => {
+    const env = {
+      VPS_EXECUTOR_TOKEN: TOKEN,
+      VPS_EXECUTOR_ADMISSION_SECRET: ADMISSION_SECRET,
+      VPS_EXECUTOR_IMAGE: "img",
+      VPS_EXECUTOR_CONTROL_PLANE_URL: CONTROL_PLANE_URL,
+    };
+    assert.equal(readConfig(env).sandboxMaxLifetimeMs, 7_500_000);
+    assert.equal(
+      readConfig({ ...env, VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS: "3600" })
+        .sandboxMaxLifetimeMs,
+      3_600_000
+    );
+    for (const seconds of ["599", "86401", "0", "-1", "soon", "1.5", ""])
+      assert.throws(
+        () => readConfig({ ...env, VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS: seconds }),
+        /VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS/
+      );
+  });
+
   it("defaults to the six provisioned slots under the host root, and refuses others", () => {
     const env = {
       VPS_EXECUTOR_TOKEN: TOKEN,
