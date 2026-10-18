@@ -318,13 +318,14 @@ export class VpsSandboxProvider implements SandboxProvider {
     const { created, reattached } = await this.create(config, true);
     if (!reattached) {
       // The empty sandbox is not a restore. Stopped, it holds neither the slot nor the cap, and the failure holds the session.
-      await this.stopSandbox({
-        providerObjectId: created.providerObjectId,
-        sessionId: config.sessionId,
-        reason: "restore_without_workspace",
-        intent: "destroy",
-        generationCreatedAtMs: config.generationCreatedAtMs,
-      }).catch(() => undefined);
+      if (created.providerObjectId)
+        await this.stopSandbox({
+          providerObjectId: created.providerObjectId,
+          sessionId: config.sessionId,
+          reason: "restore_without_workspace",
+          intent: "destroy",
+          generationCreatedAtMs: config.generationCreatedAtMs,
+        }).catch(() => undefined);
       return {
         success: false,
         error:
