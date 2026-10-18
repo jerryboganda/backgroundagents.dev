@@ -34,6 +34,8 @@ export type Admission =
   | { kind: "expired" }
   | { kind: "sandbox_held" }
   | { kind: "workspace_busy" }
+  /** A restore found no retained workspace for its session. Nothing is reserved, so no empty sandbox stands in for it. */
+  | { kind: "workspace_not_retained" }
   | { kind: "full" }
   | { kind: "workspace_full" };
 
@@ -55,6 +57,14 @@ export type Settlement =
   | { kind: "held"; record: SandboxRecord }
   | { kind: "unplaced" }
   | { kind: "free" };
+
+/** A retained workspace of a session, with the identity its owner's release names. */
+export interface RetainedWorkspace {
+  workspaceSlot: number;
+  sandboxId: string;
+  sessionId: string;
+  leaseToken: string;
+}
 
 /** An owned container this executor cannot place in a workspace. It holds a cap slot until docker drops it. */
 export interface UnplacedContainer {
@@ -103,7 +113,16 @@ export interface StateStore {
    * there too: a settled lease or sandbox id is refused, and so is one `isFresh` rejects (its expiry, read inside
    * the transaction). Throws, and records nothing, when the write fails.
    */
-  admit(record: SandboxRecord, maxAllocated: number, isFresh?: () => boolean): Admission;
+  admit(
+    record: SandboxRecord,
+    maxAllocated: number,
+    isFresh?: () => boolean,
+    /**
+     * A restore: when no workspace is named for this sandbox id, the session's most recent retained workspace is
+     * reattached and renamed to this sandbox id. An ordinary create never does, so a fresh start stays fresh.
+     */
+    restoreWorkspace?: boolean
+  ): Admission;
   /** Records the container id docker answered a create with. Throws when the write fails. */
   markRunning(leaseToken: string, providerObjectId: string): void;
   /**
@@ -154,6 +173,13 @@ export interface StateStore {
   beginOperatorRelease(sandboxId: string): ReleaseStart;
   /** Frees a workspace whose reset is complete. */
   finishRelease(workspaceSlot: number): boolean;
+  /**
+   * The session-owned workspaces (retained, or mid-reset from an earlier release) whose retaining sandbox was created
+   * before `createdBeforeMs`. The state holds no retention time, so the retaining sandbox's creation is the clock: a
+   * sandbox lives at most its lifetime bound, so this reads at most that much early. A workspace no session owns is
+   * never listed, since only an operator releases it.
+   */
+  expiredRetained(createdBeforeMs: number): RetainedWorkspace[];
   /** True when a settlement closed this lease, or closed its sandbox id. No create admits either. */
   settledFor(leaseToken: string, sandboxId: string): boolean;
   /** What a settlement would find for a scope, read in one transaction. `settle` judges it again before it writes. */
@@ -428,6 +454,21 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
       session_id = CASE WHEN retained_lease IS NULL THEN NULL ELSE session_id END,
       sandbox_id = CASE WHEN retained_lease IS NULL THEN NULL ELSE sandbox_id END
     WHERE slot = ? AND state = 'held'`);
+  const retainedBySessionStmt = db.prepare(
+    `SELECT w.slot, w.state, w.session_id, w.sandbox_id, w.retained_lease
+       FROM workspaces w JOIN sandboxes s ON s.lease_token = w.retained_lease
+      WHERE w.state = 'retained' AND w.session_id = ?
+      ORDER BY s.created_at_ms DESC LIMIT 1`
+  );
+  const renameWorkspaceStmt = db.prepare("UPDATE workspaces SET sandbox_id = ? WHERE slot = ?");
+  // ponytail: a workspace an abandon retained has no retaining lease to join, so it is never listed here. Add a retention
+  // time to the table (a migration) if abandons ever leave workspaces behind in practice.
+  const expiredRetainedStmt = db.prepare(
+    `SELECT w.slot, w.sandbox_id, w.session_id, w.retained_lease
+       FROM workspaces w JOIN sandboxes s ON s.lease_token = w.retained_lease
+      WHERE w.state IN ('retained', 'resetting') AND w.session_id != '' AND s.created_at_ms < ?
+      ORDER BY s.created_at_ms`
+  );
   const beginResetStmt = db.prepare(
     "UPDATE workspaces SET state = 'resetting' WHERE slot = ? AND state = 'retained'"
   );
@@ -440,7 +481,7 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
     holding: (sandboxId) => optionalRecord(holdingStmt.get(sandboxId)),
     byContainer: (providerObjectId) => optionalRecord(byContainerStmt.get(providerObjectId)),
     slotHolders: () => slotHoldersStmt.all().map(toRecord),
-    admit(record, maxAllocated, isFresh = () => true) {
+    admit(record, maxAllocated, isFresh = () => true, restoreWorkspace = false) {
       return inWriteTransaction(db, (): Admission => {
         const known = byLeaseStmt.get(record.leaseToken);
         if (known) return { kind: "known", record: toRecord(known) };
@@ -452,7 +493,16 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
         if (unplacedHoldsStmt.get(record.sandboxId)) return { kind: "sandbox_held" };
         // A stopped sandbox keeps its workspace for its own session. Another session is refused, and a
         // release in progress blocks every create for that sandbox id.
-        const named = workspaceByName(record.sandboxId);
+        let named = workspaceByName(record.sandboxId);
+        let restored = false;
+        if (named === undefined && restoreWorkspace) {
+          const prior = retainedBySessionStmt.get(record.sessionId);
+          if (prior !== undefined) {
+            named = toWorkspace(prior);
+            restored = true;
+          }
+        }
+        if (restoreWorkspace && named === undefined) return { kind: "workspace_not_retained" };
         if (named?.state === "held") return { kind: "sandbox_held" };
         if (named?.state === "resetting") return { kind: "workspace_busy" };
         if (named?.state === "retained" && named.sessionId !== record.sessionId)
@@ -460,6 +510,10 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
         if (Number(occupancyStmt.get()?.count) >= maxAllocated) return { kind: "full" };
         if (named?.state === "retained") {
           reattachStmt.run(named.slot);
+          // A restore names a new sandbox id. The workspace takes it, so a later release names the sandbox that holds it.
+          // ponytail: a create that is then refused or unwound leaves the slot retained under the new id and the old lease,
+          // so a release naming the original sandbox id finds nothing. Restore-by-session and the TTL sweep use neither.
+          if (restored) renameWorkspaceStmt.run(record.sandboxId, named.slot);
           insertStmt.run(...recordValues(record), named.slot);
           return { kind: "reserved", workspaceSlot: named.slot, reattached: true };
         }
@@ -620,6 +674,13 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
       });
     },
     occupancy: () => Number(occupancyStmt.get()?.count),
+    expiredRetained: (createdBeforeMs) =>
+      expiredRetainedStmt.all(createdBeforeMs).map((row) => ({
+        workspaceSlot: Number(row.slot),
+        sandboxId: String(row.sandbox_id),
+        sessionId: String(row.session_id),
+        leaseToken: String(row.retained_lease),
+      })),
     close: () => {
       db.close();
       owner.close();

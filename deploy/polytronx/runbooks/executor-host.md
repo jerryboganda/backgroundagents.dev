@@ -32,7 +32,9 @@ Nothing in this runbook has been run against either host. Each step is for the o
 - The executor port is published on loopback only. The dashboard host reaches it through the private
   HTTPS edge, which admits that one source ([private-edge.md](private-edge.md)).
 - Executor state is one SQLite file, `executor-state.db`, in the `executor-state` volume. Nothing
-  evicts workspace data automatically; the reset TTL was removed.
+  evicts a running sandbox's workspace, and the old reset TTL stays removed. The one timer releases a stopped session's
+  retained workspace after `EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS` (three days by default), so the six slots do not fill
+  with sessions that never returned.
 
 ## 1. Host prerequisites (manual)
 
@@ -128,7 +130,10 @@ Nothing in this runbook has been run against either host. Each step is for the o
    `EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS` (default 7500, from 600 to 86400). The executor removes
    any sandbox running longer than that, and any owned container that has not been running for 10
    minutes, so a sandbox whose session was archived or lost never stays up. Keep it above the
-   longest session timeout the control plane allows.
+   longest session timeout the control plane allows. And `EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS`
+   (default 259200, three days, from 3600 to 2592000): a stopped session keeps its workspace for a
+   follow-up prompt, then the executor releases it so the host's six slots never fill with sessions
+   that did not return.
 3. Preflight, alone, as root:
    ```
    sudo bash deploy/polytronx/preflight-executor.sh --release /opt/polytronx/executor/executor-release.env --secrets-dir /opt/polytronx/executor/secrets

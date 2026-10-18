@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CreateSandboxConfig, ResolveSandboxConfig, StopConfig } from "../provider";
+import {
+  SandboxProviderError,
+  type CreateSandboxConfig,
+  type ResolveSandboxConfig,
+  type StopConfig,
+} from "../provider";
 import { createVpsProviderFromEnv } from "../provider-factory";
 import { parseVpsPendingVmReference } from "./pending-vm-reference";
 import { createVpsProvider } from "./vps-provider";
@@ -68,11 +73,108 @@ describe("VpsSandboxProvider", () => {
   it("advertises only the capabilities it implements", () => {
     expect(provider().capabilities).toEqual({
       supportsSandboxTimeout: false,
-      supportsSnapshots: false,
-      supportsRestore: false,
+      supportsSnapshots: true,
+      supportsRestore: true,
       supportsPersistentResume: false,
       supportsExplicitStop: true,
+      snapshotRequiresShutdown: true,
     });
+  });
+
+  it("saves a session by naming its retained workspace, and stops nothing so the shutdown's own retirement stops it and frees the slot", async () => {
+    await expect(
+      provider().takeSnapshot({
+        providerObjectId: "vm-1",
+        sessionId: "session-1",
+        reason: "inactivity_timeout",
+      })
+    ).resolves.toEqual({
+      success: true,
+      imageId: "vps-workspace:session-1",
+      sourceStopped: false,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("restores a session by creating its sandbox with the retained workspace reattached, and refuses any snapshot id that is not its own", async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ providerObjectId: "vm-2", reattached: true }));
+    await expect(
+      provider().restoreFromSnapshot({
+        ...createConfig,
+        snapshotImageId: "vps-workspace:session-1",
+      })
+    ).resolves.toMatchObject({
+      success: true,
+      sandboxId: "sandbox-1",
+      providerObjectId: "vm-2",
+      lifetime: { kind: "unknown" },
+    });
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(url).toBe("https://executor.test/v1/sandboxes");
+    expect(JSON.parse(init.body)).toMatchObject({
+      sandboxId: "sandbox-1",
+      sessionId: "session-1",
+      restoreWorkspace: true,
+    });
+
+    fetchSpy.mockClear();
+    for (const snapshotImageId of ["vps-workspace:session-2", "im-abc123", ""])
+      await expect(
+        provider().restoreFromSnapshot({ ...createConfig, snapshotImageId })
+      ).resolves.toEqual({
+        success: false,
+        error: "Not a VPS workspace snapshot of this session",
+      });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails a restore that did not reattach the workspace, and stops the empty sandbox it started", async () => {
+    // An older executor omits the field, and a newer one says false once the retained workspace was released.
+    for (const created of [
+      { providerObjectId: "vm-3" },
+      { providerObjectId: "vm-3", reattached: false },
+    ]) {
+      fetchSpy.mockReset();
+      fetchSpy
+        .mockResolvedValueOnce(jsonResponse(created))
+        .mockResolvedValueOnce(jsonResponse({ stopped: true }));
+      await expect(
+        provider().restoreFromSnapshot({
+          ...createConfig,
+          snapshotImageId: "vps-workspace:session-1",
+        })
+      ).resolves.toEqual({
+        success: false,
+        error:
+          "The saved workspace is no longer held by the executor, and no fresh sandbox was substituted",
+      });
+      const [stopUrl, stopInit] = fetchSpy.mock.calls[1];
+      expect(stopUrl).toBe("https://executor.test/v1/sandboxes/vm-3/stop");
+      expect(JSON.parse(stopInit.body)).toEqual({ reason: "restore_without_workspace" });
+    }
+  });
+
+  it("fails a restore the executor refuses for want of a retained workspace as a refusal that allocated nothing", async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ error: "workspace_not_retained" }, 409));
+    const error = await failureOf(() =>
+      provider().restoreFromSnapshot({
+        ...createConfig,
+        snapshotImageId: "vps-workspace:session-1",
+      })
+    );
+    expect(error).toBeInstanceOf(SandboxProviderError);
+    expect((error as Error).message).toBe(
+      "The saved workspace is no longer held by the executor, and no fresh sandbox was substituted"
+    );
+    // A refusal that allocated nothing is not an ambiguous launch, so no resolve or stop follows.
+    expect(provider().isUnknownStartupError(error)).toBe(false);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("never asks for a workspace to be reattached on an ordinary create", async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ providerObjectId: "vm-1" }));
+    await provider().createSandbox(createConfig);
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).not.toHaveProperty("restoreWorkspace");
   });
 
   it("fails fast with a typed error when URL or token is missing", async () => {

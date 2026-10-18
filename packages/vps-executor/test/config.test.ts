@@ -85,6 +85,40 @@ describe("readConfig", () => {
       );
   });
 
+  it("keeps a stopped session's workspace three days by default, and refuses a value outside an hour to thirty days", () => {
+    const env = {
+      VPS_EXECUTOR_TOKEN: TOKEN,
+      VPS_EXECUTOR_ADMISSION_SECRET: ADMISSION_SECRET,
+      VPS_EXECUTOR_IMAGE: "img",
+      VPS_EXECUTOR_CONTROL_PLANE_URL: CONTROL_PLANE_URL,
+    };
+    assert.equal(readConfig(env).retainedWorkspaceTtlMs, 259_200_000);
+    assert.equal(
+      readConfig({ ...env, VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: "86400" })
+        .retainedWorkspaceTtlMs,
+      86_400_000
+    );
+    for (const seconds of ["3599", "2592001", "0", "-1", "week", "1.5", ""])
+      assert.throws(
+        () => readConfig({ ...env, VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: seconds }),
+        /VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS/
+      );
+    // The retention clock starts at the sandbox's creation, so it must outlast the sandbox itself.
+    assert.throws(
+      () => readConfig({ ...env, VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: "7500" }),
+      /must exceed/
+    );
+    assert.throws(
+      () =>
+        readConfig({
+          ...env,
+          VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS: "86400",
+          VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: "86400",
+        }),
+      /must exceed/
+    );
+  });
+
   it("defaults to the six provisioned slots under the host root, and refuses others", () => {
     const env = {
       VPS_EXECUTOR_TOKEN: TOKEN,

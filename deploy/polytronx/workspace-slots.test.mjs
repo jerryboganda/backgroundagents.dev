@@ -255,13 +255,19 @@ describe("the executor's view of the slots", () => {
     }
   });
 
-  it("fixes the six slots, the state file and the trusted control-plane URL, with no reset TTL, and publishes the API on loopback only", () => {
+  it("fixes the six slots, the state file and the trusted control-plane URL, with only the retained-workspace release timer, and publishes the API on loopback only", () => {
     assert.match(compose, /VPS_EXECUTOR_WORKSPACE_ROOT: \/srv\/vps-ws\/slots/);
     assert.match(compose, /VPS_EXECUTOR_WORKSPACE_SLOTS: "6"/);
     assert.match(compose, /VPS_EXECUTOR_STATE_FILE: \/var\/lib\/vps-executor\/executor-state\.db/);
     assert.match(compose, /VPS_EXECUTOR_CONTROL_PLANE_URL: \$\{VPS_EXECUTOR_CONTROL_PLANE_URL:\?/);
     assert.match(compose, /- "127\.0\.0\.1:8787:8787"/);
-    assert.doesNotMatch(compose, /TTL|\bEXECUTOR_(BIND_ADDRESS|WORKSPACE_SLOTS)\b/);
+    // No reset timer of the removed kind. The one timer releases a session's retained workspace long after it stopped,
+    // and never one a running sandbox holds: the executor package's tests cover that.
+    assert.doesNotMatch(compose, /RESET_TTL|\bEXECUTOR_(BIND_ADDRESS|WORKSPACE_SLOTS)\b/);
+    assert.match(
+      compose,
+      /VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: \$\{EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS:-259200\}/
+    );
   });
 
   it("keeps the executor's control-plane URL out of the dashboard release template, and has preflight run both read-only checks", () => {

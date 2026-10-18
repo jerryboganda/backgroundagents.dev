@@ -9,6 +9,10 @@ const MIN_TOKEN_LENGTH = 32;
 const MIN_ADMISSION_SECRET_LENGTH = 32;
 /** How often docker is reconciled with the state when no create arrives to do it. */
 const RECONCILE_INTERVAL_MS = 30_000;
+/** How often retained workspaces past their retention are released. Their age is counted in days, so minutes are enough. */
+const RELEASE_INTERVAL_MS = 300_000;
+/** A stopped session keeps its workspace three days for a follow-up prompt. The host has six slots, so it cannot be forever. */
+const DEFAULT_RETAINED_WORKSPACE_TTL_MS = 259_200_000;
 
 export interface ExecutorConfig {
   token: string;
@@ -26,6 +30,8 @@ export interface ExecutorConfig {
   controlPlaneUrl: string;
   /** A sandbox running longer than this is removed by the periodic sweep. */
   sandboxMaxLifetimeMs: number;
+  /** A session's retained workspace is released once its last sandbox is older than this. */
+  retainedWorkspaceTtlMs: number;
 }
 
 /**
@@ -68,6 +74,19 @@ export function readConfig(env: NodeJS.ProcessEnv): ExecutorConfig {
     throw new Error(
       "VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS must be an integer from 600 to 86400"
     );
+  const retainedSeconds = Number(
+    env.VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS ?? DEFAULT_RETAINED_WORKSPACE_TTL_MS / 1000
+  );
+  if (!Number.isInteger(retainedSeconds) || retainedSeconds < 3_600 || retainedSeconds > 2_592_000)
+    throw new Error(
+      "VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS must be an integer from 3600 to 2592000"
+    );
+  // The retention clock is the retaining sandbox's creation, so a TTL under the lifetime could free a workspace the moment
+  // its sandbox stops.
+  if (retainedSeconds <= lifetimeSeconds)
+    throw new Error(
+      "VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS must exceed VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS"
+    );
   return {
     token,
     admissionSecret,
@@ -85,6 +104,7 @@ export function readConfig(env: NodeJS.ProcessEnv): ExecutorConfig {
     workspaceSlots,
     controlPlaneUrl,
     sandboxMaxLifetimeMs: lifetimeSeconds * 1000,
+    retainedWorkspaceTtlMs: retainedSeconds * 1000,
   };
 }
 
@@ -142,6 +162,24 @@ export async function main(env: NodeJS.ProcessEnv): Promise<void> {
   };
   reconcile();
   setInterval(reconcile, RECONCILE_INTERVAL_MS).unref();
+
+  // Its own pass: clearing a 10 GiB workspace is slow, and must not hold reconciliation back.
+  let releasing = false;
+  const releaseStale = (): void => {
+    if (releasing) return;
+    releasing = true;
+    server
+      .releaseExpiredWorkspaces(config.retainedWorkspaceTtlMs)
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : "unknown error";
+        console.error(`vps-executor: workspace release failed: ${reason}`);
+      })
+      .finally(() => {
+        releasing = false;
+      });
+  };
+  releaseStale();
+  setInterval(releaseStale, RELEASE_INTERVAL_MS).unref();
 }
 
 // Start only when run directly, so tests can import readConfig without binding a port.

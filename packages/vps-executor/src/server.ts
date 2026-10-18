@@ -80,11 +80,28 @@ interface Failure {
 /** The outcome of emptying a slot this process holds. */
 type SlotClear = "cleared" | "active" | "unavailable" | "failed";
 
+export interface WorkspaceSweepResult {
+  /** Retained workspaces emptied and freed. */
+  released: number;
+  /** Workspaces that could not be freed this pass. A release that began stays resetting, and the next pass resumes it. */
+  failed: number;
+}
+
+/** The HTTP server, and the one background operation that needs this server's own workspace-clearing state. */
+export type ExecutorServer = Server & {
+  /**
+   * Releases the workspaces of sessions whose last sandbox was created more than `maxAgeMs` ago, so a session that never
+   * comes back does not hold one of the host's six slots for good. Each goes through the same owner release as the
+   * release route, with the identity the state holds for it, so nothing frees a workspace a running sandbox uses.
+   */
+  releaseExpiredWorkspaces(maxAgeMs: number): Promise<WorkspaceSweepResult>;
+};
+
 /**
  * HTTP API. Every endpoint except GET /v1/health requires the bearer token. The operator endpoints (abandon,
  * operator-release) act on one sandbox id each, and only when docker shows no container the state cannot account for.
  */
-export function createExecutorServer(options: ExecutorServerOptions): Server {
+export function createExecutorServer(options: ExecutorServerOptions): ExecutorServer {
   const { token, admissionSecret, runtime, store, workspaceRoot, controlPlaneUrl } = options;
   const checkWorkspace = options.checkWorkspace ?? ((hostPath: string) => checkSlot(hostPath));
   const repairWorkspace =
@@ -219,7 +236,12 @@ export function createExecutorServer(options: ExecutorServerOptions): Server {
     let admission: Admission;
     try {
       // One write transaction, shared with every other process: the lease, the sandbox id and the cap are judged, and the reservation is durable, before docker runs.
-      admission = store.admit(record, MAX_ALLOCATED_SANDBOXES, () => now() < lease.expiresAtMs);
+      admission = store.admit(
+        record,
+        MAX_ALLOCATED_SANDBOXES,
+        () => now() < lease.expiresAtMs,
+        body.restoreWorkspace === true
+      );
     } catch (error) {
       reportError("could not record a reservation", error);
       return sendJson(res, 503, { error: "state_unavailable" });
@@ -248,6 +270,8 @@ export function createExecutorServer(options: ExecutorServerOptions): Server {
         return sendJson(res, 409, { error: "sandbox_id_conflict" });
       case "workspace_busy":
         return sendJson(res, 409, { error: "workspace_busy" });
+      case "workspace_not_retained":
+        return sendJson(res, 409, { error: "workspace_not_retained" });
       case "full":
         return sendJson(res, 503, { error: "capacity_exhausted" });
       case "workspace_full":
@@ -330,7 +354,8 @@ export function createExecutorServer(options: ExecutorServerOptions): Server {
       });
       return sendJson(res, failure.status, { error: failure.error });
     }
-    sendJson(res, 201, { providerObjectId });
+    // Whether the sandbox runs on the session's retained workspace. A restore that did not reattach starts empty.
+    sendJson(res, 201, { providerObjectId, reattached });
   }
 
   /**
@@ -890,13 +915,44 @@ export function createExecutorServer(options: ExecutorServerOptions): Server {
     return settlementAnswer(found, scope);
   }
 
-  return createServer((req, res) => {
+  async function releaseExpiredWorkspaces(maxAgeMs: number): Promise<WorkspaceSweepResult> {
+    const result: WorkspaceSweepResult = { released: 0, failed: 0 };
+    for (const held of store.expiredRetained(now() - maxAgeMs)) {
+      const { workspaceSlot, sandboxId, sessionId, leaseToken } = held;
+      // One clear of a slot runs at a time in this process, and a release route call may be clearing this one.
+      if (clearing.has(workspaceSlot)) continue;
+      clearing.add(workspaceSlot);
+      try {
+        // A container that still names the slot means the session came back, so the workspace is not stale.
+        if (await namedByOwned(sandboxId, workspaceSlot)) continue;
+        // The owner's own identity fences the release, as in the route. Anything but a start is not ours to clear.
+        const start = store.beginRelease(sandboxId, sessionId, leaseToken);
+        if (start.kind !== "started") continue;
+        const outcome = await emptyHeldSlot(sandboxId, workspaceSlot);
+        if (outcome === "cleared" && store.finishRelease(workspaceSlot)) {
+          result.released += 1;
+          console.log(
+            `vps-executor: released the workspace of sandbox ${sandboxId} from slot ${workspaceSlot}; its session did not return`
+          );
+        } else if (outcome !== "active") result.failed += 1;
+      } catch (error) {
+        result.failed += 1;
+        reportError("could not release a stale workspace", error);
+      } finally {
+        clearing.delete(workspaceSlot);
+      }
+    }
+    return result;
+  }
+
+  const server = createServer((req, res) => {
     handle(req, res).catch((error: unknown) => {
       if (error instanceof RequestError) return sendJson(res, error.status, { error: error.code });
       reportError("request failed", error);
       if (!res.headersSent) sendJson(res, 500, { error: "internal_error" });
     });
   });
+  return Object.assign(server, { releaseExpiredWorkspaces });
 }
 
 export interface ReconcileResult {

@@ -6,8 +6,8 @@
  * host; the executor owns placement and checks the admission lease forwarded on
  * create.
  *
- * Create, resolve, stop, and a health probe. Resume, restore, and snapshots are
- * not implemented and not advertised. An ambiguous create is recovered through
+ * Create, resolve, stop, and a health probe, plus a snapshot and restore that are the executor's retained workspace
+ * (see takeSnapshot). Resume is not implemented and not advertised. An ambiguous create is recovered through
  * the lifecycle's pending reference: resolve by sandbox id, then stop the object
  * it names.
  *
@@ -31,9 +31,11 @@
  *   - admission/close answers "absent" only after it tombstones the lease and its sandbox id, so a create that
  *     follows for that id is refused. A stop tombstones the id too, because a valid lease replays until it expires.
  *   - A create whose docker run ends unverified holds its slots as unresolved until reconciliation finds the container.
- *   - A stopped sandbox's workspace is retained for its owning session, not freed by a timer. Only the executor's
- *     authenticated release route frees it. This provider never calls that route, so a retained workspace stays
- *     held until a later release path does.
+ *   - A stopped sandbox's workspace is retained for its owning session. A restore (create with restoreWorkspace: true)
+ *     reattaches it under the new sandbox id, and answers `reattached` in its 201. The executor releases a retained
+ *     workspace on its own once its last sandbox is older than VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS (three
+ *     days by default), through the same owner release the authenticated release route performs. This provider never
+ *     calls that route.
  *   - The close proof's expiry is not checked: a lapsed proof settles and never creates.
  *
  * Typed 404s: a 404 proves gone only with the { error: "sandbox_not_found" } body, which only the executor's stop route
@@ -58,10 +60,14 @@ import {
   type PendingSandboxAllocation,
   type ResolveSandboxConfig,
   type ResolveSandboxResult,
+  type RestoreConfig,
+  type RestoreResult,
   type SandboxAdmissionProof,
   type SandboxLifetime,
   type SandboxProvider,
   type SandboxProviderCapabilities,
+  type SnapshotConfig,
+  type SnapshotResult,
   type StopConfig,
   type StopResult,
 } from "../provider";
@@ -94,6 +100,7 @@ const REFUSED_BEFORE_ALLOCATION = new Set([
   "admission_expired",
   "capacity_exhausted",
   "workspace_busy",
+  "workspace_not_retained",
   "workspace_capacity_exhausted",
   "isolation_unavailable",
   "body_too_large",
@@ -123,7 +130,11 @@ export interface VpsExecutorConfig {
   scmProvider?: SourceControlProviderName;
 }
 
-const createResponseSchema = z.object({ providerObjectId: z.string().min(1) });
+const createResponseSchema = z.object({
+  providerObjectId: z.string().min(1),
+  // Whether the sandbox runs on the session's retained workspace. An executor that predates the field omits it.
+  reattached: z.boolean().optional(),
+});
 const resolveResponseSchema = z.object({
   sandboxId: z.string().min(1),
   providerObjectId: z.string().min(1),
@@ -140,6 +151,11 @@ const closeResponseSchema = z.discriminatedUnion("outcome", [
 export type VpsAdmissionClose =
   { kind: "absent" } | { kind: "present"; providerObjectId: string } | { kind: "undecided" };
 
+/** The snapshot id of a session's retained workspace. It names no file: the executor keys the workspace by session. */
+function workspaceSnapshotId(sessionId: string): string {
+  return `vps-workspace:${sessionId}`;
+}
+
 /** The executor refused a create before allocating anything, so the lease it carried is unspent. */
 class VpsCreateRefusedError extends SandboxProviderError {}
 
@@ -148,10 +164,13 @@ export class VpsSandboxProvider implements SandboxProvider {
 
   readonly capabilities: SandboxProviderCapabilities = {
     supportsSandboxTimeout: false,
-    supportsSnapshots: false,
-    supportsRestore: false,
+    // The workspace the executor retains on a stop is the snapshot. See takeSnapshot.
+    supportsSnapshots: true,
+    supportsRestore: true,
     supportsPersistentResume: false,
     supportsExplicitStop: true,
+    // Saving ends the sandbox, so a turn never saves: inactivity, lifetime expiry and failures do.
+    snapshotRequiresShutdown: true,
   };
 
   constructor(
@@ -164,6 +183,15 @@ export class VpsSandboxProvider implements SandboxProvider {
   ) {}
 
   async createSandbox(config: CreateSandboxConfig): Promise<CreateSandboxResult> {
+    const { created } = await this.create(config, false);
+    return created;
+  }
+
+  /** The create both entry points share. `restoreWorkspace` asks the executor to reattach the session's retained workspace. */
+  private async create(
+    config: CreateSandboxConfig,
+    restoreWorkspace: boolean
+  ): Promise<{ created: CreateSandboxResult; reattached: boolean }> {
     const lease = config.admissionLease;
     // Only the user layer is filtered: the system env overlays it, so the trusted keys are never dropped here.
     const { accepted, refused } = partitionUserEnvVars(config.userEnvVars ?? {});
@@ -177,6 +205,7 @@ export class VpsSandboxProvider implements SandboxProvider {
     const { status, body, code } = await this.exchange("create sandbox", "POST", "/v1/sandboxes", {
       sandboxId: config.sandboxId,
       sessionId: config.sessionId,
+      ...(restoreWorkspace ? { restoreWorkspace: true } : {}),
       ...(lease ? { admissionLease: await this.signLease(lease, config) } : {}),
       runtimeContext: {
         env: buildSandboxEnvVars(config, {
@@ -185,13 +214,21 @@ export class VpsSandboxProvider implements SandboxProvider {
         }),
       },
     });
+    if (code === "workspace_not_retained")
+      throw new VpsCreateRefusedError(
+        "The saved workspace is no longer held by the executor, and no fresh sandbox was substituted",
+        "permanent"
+      );
     if (status < 200 || status >= 300) throw createFailure(status, code);
-    const created = parseBody("create sandbox", createResponseSchema, body);
+    const parsed = parseBody("create sandbox", createResponseSchema, body);
     return {
-      sandboxId: config.sandboxId,
-      providerObjectId: created.providerObjectId,
-      createdAt: Date.now(),
-      lifetime: unknownLifetime(),
+      created: {
+        sandboxId: config.sandboxId,
+        providerObjectId: parsed.providerObjectId,
+        createdAt: Date.now(),
+        lifetime: unknownLifetime(),
+      },
+      reattached: parsed.reattached === true,
     };
   }
 
@@ -255,6 +292,50 @@ export class VpsSandboxProvider implements SandboxProvider {
       sandboxId: resolved.sandboxId,
       providerObjectId: resolved.providerObjectId,
       lifetime: unknownLifetime(),
+    };
+  }
+
+  /**
+   * A VPS "snapshot" copies nothing. The executor retains a stopped sandbox's workspace for its session, so the
+   * recovery point already exists and the only step left is the stop. That stop is the shutdown flow's own retirement of
+   * the source, which also frees the admission slot, so the source is reported as still running here (sourceStopped
+   * false) and this call stops nothing. Without a snapshot to take, a sandbox that went idle ended its shutdown
+   * unconfirmed and held its slot until an operator removed it.
+   */
+  async takeSnapshot(config: SnapshotConfig): Promise<SnapshotResult> {
+    return { success: true, imageId: workspaceSnapshotId(config.sessionId), sourceStopped: false };
+  }
+
+  /**
+   * Starts a sandbox for a session whose workspace was retained: the create asks the executor to reattach it. When the
+   * executor no longer holds it (released after its retention, or an older executor that cannot reattach), the sandbox
+   * that started is stopped and the restore fails, so no empty sandbox stands in for a saved one. Only this session's
+   * own snapshot id is accepted, so a stale or foreign id never starts a sandbox.
+   */
+  async restoreFromSnapshot(config: RestoreConfig): Promise<RestoreResult> {
+    if (config.snapshotImageId !== workspaceSnapshotId(config.sessionId))
+      return { success: false, error: "Not a VPS workspace snapshot of this session" };
+    const { created, reattached } = await this.create(config, true);
+    if (!reattached) {
+      // The empty sandbox is not a restore. Stopped, it holds neither the slot nor the cap, and the failure holds the session.
+      await this.stopSandbox({
+        providerObjectId: created.providerObjectId,
+        sessionId: config.sessionId,
+        reason: "restore_without_workspace",
+        intent: "destroy",
+        generationCreatedAtMs: config.generationCreatedAtMs,
+      }).catch(() => undefined);
+      return {
+        success: false,
+        error:
+          "The saved workspace is no longer held by the executor, and no fresh sandbox was substituted",
+      };
+    }
+    return {
+      success: true,
+      sandboxId: created.sandboxId,
+      providerObjectId: created.providerObjectId,
+      lifetime: created.lifetime,
     };
   }
 

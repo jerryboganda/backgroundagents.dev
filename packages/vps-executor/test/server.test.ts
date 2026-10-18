@@ -303,6 +303,7 @@ interface Executor {
   stateFile: string;
   store: StateStore;
   runtime: DockerRuntime;
+  releaseExpiredWorkspaces(maxAgeMs: number): Promise<{ released: number; failed: number }>;
   close(): Promise<void>;
 }
 
@@ -358,6 +359,7 @@ async function startExecutor(
     stateFile,
     store,
     runtime,
+    releaseExpiredWorkspaces: (maxAgeMs) => server.releaseExpiredWorkspaces(maxAgeMs),
     close: async () => {
       await new Promise<void>((resolve, reject) => {
         server.closeAllConnections();
@@ -3080,6 +3082,150 @@ describe("sweep of stale containers", () => {
       };
       assert.deepEqual(await sweep(executor, runtime), { reaped: 1, failed: 0 });
       assert.equal(executor.store.isUnplaced(id), false);
+    });
+  });
+});
+
+describe("release of a stale retained workspace", () => {
+  const DAY_MS = 86_400_000;
+  const stop = (executor: Executor, providerObjectId: string) =>
+    request(executor, "POST", `/v1/sandboxes/${providerObjectId}/stop`, {
+      body: { reason: "idle" },
+    });
+
+  it("releases the workspace of a session whose last sandbox is older than the limit, and frees its slot for a new session", async () => {
+    await withExecutor(async (executor) => {
+      const providerObjectId = await createSandbox(executor);
+      assert.equal((await stop(executor, providerObjectId)).status, 200);
+      // The slot is retained for its owner, not free.
+      assert.equal(executor.store.expiredRetained(NOW + 1).length, 1);
+
+      executor.clock.nowMs = NOW + 3 * DAY_MS - 1;
+      assert.deepEqual(await executor.releaseExpiredWorkspaces(3 * DAY_MS), {
+        released: 0,
+        failed: 0,
+      });
+      assert.equal(executor.store.expiredRetained(NOW + 1).length, 1);
+
+      executor.clock.nowMs = NOW + 3 * DAY_MS + 1;
+      assert.deepEqual(await executor.releaseExpiredWorkspaces(3 * DAY_MS), {
+        released: 1,
+        failed: 0,
+      });
+      assert.equal(executor.store.expiredRetained(NOW + 4 * DAY_MS).length, 0);
+      assert.deepEqual(await executor.releaseExpiredWorkspaces(3 * DAY_MS), {
+        released: 0,
+        failed: 0,
+      });
+    });
+  });
+
+  it("never releases a workspace a running sandbox holds, however old its sandbox", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      executor.clock.nowMs = NOW + 30 * DAY_MS;
+      assert.deepEqual(await executor.releaseExpiredWorkspaces(DAY_MS), { released: 0, failed: 0 });
+      assert.equal(executor.store.occupancy(), 1);
+    });
+  });
+
+  it("counts a failed reset as failed, leaves the slot resetting, and resumes it on the next pass", async () => {
+    await withStateDir(async (stateFile) => {
+      let failing = true;
+      const executor = await startExecutor(
+        stateFile,
+        new FakeDocker(),
+        { nowMs: NOW },
+        {
+          resetWorkspace: async () => {
+            if (failing) throw new Error("disk busy");
+          },
+        }
+      );
+      try {
+        const providerObjectId = await createSandbox(executor);
+        assert.equal((await stop(executor, providerObjectId)).status, 200);
+        executor.clock.nowMs = NOW + 4 * DAY_MS;
+        assert.deepEqual(await executor.releaseExpiredWorkspaces(3 * DAY_MS), {
+          released: 0,
+          failed: 1,
+        });
+        // Still listed: it is resetting, so the next pass resumes it.
+        assert.equal(executor.store.expiredRetained(NOW + 5 * DAY_MS).length, 1);
+        failing = false;
+        assert.deepEqual(await executor.releaseExpiredWorkspaces(3 * DAY_MS), {
+          released: 1,
+          failed: 0,
+        });
+        assert.equal(executor.store.expiredRetained(NOW + 5 * DAY_MS).length, 0);
+      } finally {
+        await executor.close();
+      }
+    });
+  });
+});
+
+describe("restore of a session's retained workspace", () => {
+  const stopFirst = async (executor: Executor) => {
+    const providerObjectId = await createSandbox(executor);
+    const stopped = await request(executor, "POST", `/v1/sandboxes/${providerObjectId}/stop`, {
+      body: { reason: "idle" },
+    });
+    assert.equal(stopped.status, 200);
+  };
+  const createAs = async (executor: Executor, body: Record<string, unknown>) => {
+    const res = await request(executor, "POST", "/v1/sandboxes", { body });
+    assert.equal(res.status, 201);
+    return (await res.json()) as { providerObjectId: string; reattached: boolean };
+  };
+
+  it("mounts the session's retained slot under the new sandbox id when the create asks to restore", async () => {
+    await withExecutor(async (executor) => {
+      await stopFirst(executor);
+      const restored = await createAs(executor, {
+        ...createBody("sandbox-2", "session-1", "lease-2"),
+        restoreWorkspace: true,
+      });
+      assert.equal(restored.reattached, true);
+      assert.ok(boundTo(executor.docker, 1, slotPathOf(executor.stateFile, 0)));
+      // The workspace is held under the new sandbox id now, so it frees only through a release naming that sandbox.
+      assert.equal(executor.store.occupancy(), 1);
+    });
+  });
+
+  it("starts an ordinary create on a fresh slot, so a fresh start stays fresh, and reports it did not reattach", async () => {
+    await withExecutor(async (executor) => {
+      await stopFirst(executor);
+      const fresh = await createAs(executor, createBody("sandbox-2", "session-1", "lease-2"));
+      assert.equal(fresh.reattached, false);
+      assert.ok(boundTo(executor.docker, 1, slotPathOf(executor.stateFile, 1)));
+    });
+  });
+
+  it("refuses another session's restore, and starts nothing", async () => {
+    await withExecutor(async (executor) => {
+      await stopFirst(executor);
+      const other = await request(executor, "POST", "/v1/sandboxes", {
+        body: { ...createBody("sandbox-2", "session-2", "lease-2"), restoreWorkspace: true },
+      });
+      assert.equal(other.status, 409);
+      assert.deepEqual(await other.json(), { error: "workspace_not_retained" });
+      assert.equal(executor.docker.runs().length, 1);
+      assert.equal(executor.store.occupancy(), 0);
+    });
+  });
+
+  it("refuses a restore when its session holds no retained workspace, so no empty sandbox stands in for it", async () => {
+    await withExecutor(async (executor) => {
+      const res = await request(executor, "POST", "/v1/sandboxes", {
+        body: { ...CREATE, restoreWorkspace: true },
+      });
+      assert.equal(res.status, 409);
+      assert.deepEqual(await res.json(), { error: "workspace_not_retained" });
+      assert.equal(executor.docker.runs().length, 0);
+      assert.equal(executor.store.occupancy(), 0);
+      // The refusal allocated nothing, so the same lease still creates an ordinary sandbox.
+      assert.equal((await createAs(executor, CREATE)).reattached, false);
     });
   });
 });
