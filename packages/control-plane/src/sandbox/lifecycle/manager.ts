@@ -381,11 +381,13 @@ export const DEFAULT_LIFECYCLE_CONFIG: Omit<SandboxLifecycleConfig, "controlPlan
   bootBudget: DEFAULT_BOOT_BUDGET_CONFIG,
 };
 
-function buildSandboxIdForSession(session: SessionRow, now: number): string {
+// Providers restrict ids (the VPS executor accepts [A-Za-z0-9_-], 128 characters), and a repository
+// name such as "backgroundagents.dev" has a dot, so anything else becomes "-" and the name is capped.
+export function buildSandboxIdForSession(session: SessionRow, now: number): string {
   const sandboxName = sessionHasRepository(session)
     ? `${session.repo_owner}-${session.repo_name}`
     : session.id;
-  return `sandbox-${sandboxName}-${now}`;
+  return `sandbox-${sandboxName.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 80)}-${now}`;
 }
 
 // ==================== Manager ====================
