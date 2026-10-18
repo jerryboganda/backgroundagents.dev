@@ -96,9 +96,12 @@ Nothing in this runbook has been run against either host. Each step is for the o
    sudo bash deploy/polytronx/sandbox-network.sh check
    ```
    `apply` creates `oi-sandbox`, the two owned iptables chains and their jumps, and enables
-   `polytronx-sandbox-network.service`. That unit runs `restore` on every boot, after Docker and
-   UFW: it re-applies the rules and the IPv6 setting, and writes and enables nothing. It needs
-   Docker's `DOCKER-USER` chain, so Docker must run with iptables enabled.
+   `polytronx-sandbox-network.service`. It also writes `/etc/polytronx/sandbox-resolv.conf`
+   (1.1.1.1 and 9.9.9.9), which the executor bind-mounts read-only over every sandbox's
+   `/etc/resolv.conf`, because runsc cannot reach Docker's embedded resolver. That unit runs
+   `restore` on every boot, after Docker and UFW: it re-applies the rules, the IPv6 setting and
+   the resolver file, and writes and enables nothing else. It needs Docker's `DOCKER-USER`
+   chain, so Docker must run with iptables enabled.
 
 ## 2. Release
 

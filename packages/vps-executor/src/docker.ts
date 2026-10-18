@@ -28,6 +28,9 @@ const TMP_TMPFS = "/tmp:exec,nosuid,nodev,size=256m";
 // The image wrapper's desktop keeps its X socket here. Mode 1777 is the sticky world-writable mode X expects.
 // The socket is all this mount holds, so it is bounded to 1m.
 const X11_SOCKET_TMPFS = "/tmp/.X11-unix:nosuid,nodev,mode=1777,size=1m";
+// Written by deploy/polytronx/sandbox-network.sh (a test keeps the two paths equal). runsc cannot reach Docker's embedded
+// resolver, so each sandbox gets this file over /etc/resolv.conf; --dns would only feed that resolver (EAI_AGAIN, verified live).
+const RESOLV_CONF_SOURCE = "/etc/polytronx/sandbox-resolv.conf";
 // Every sandbox joins this network. Host setup provisions it; this executor only names it, and proves the two network
 // properties isolation depends on before any create.
 const SANDBOX_NETWORK = "oi-sandbox";
@@ -273,6 +276,8 @@ export function buildRunArgs(
     // The slot's own home subdirectory: it persists with the workspace, and a release clears both.
     "--mount",
     `type=bind,source=${join(workspace.hostPath, HOME_DIRECTORY)},target=${HOME_TARGET}`,
+    "--mount",
+    `type=bind,source=${RESOLV_CONF_SOURCE},target=/etc/resolv.conf,readonly`,
     "--workdir",
     WORKSPACE_TARGET,
     "-e",

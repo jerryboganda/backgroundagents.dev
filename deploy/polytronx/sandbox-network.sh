@@ -8,13 +8,13 @@
 #
 #   sandbox-network.sh check [--subnet S]      read-only; exits 1 on any mismatch
 #   sandbox-network.sh apply [--subnet S]      idempotent; refuses to replace an existing network
-#   sandbox-network.sh restore [--subnet S]    the boot unit's command: restores the rules and sysctl; writes nothing
+#   sandbox-network.sh restore [--subnet S]    the boot unit's command: restores the rules, sysctl and resolver file
 #   sandbox-network.sh rollback [--subnet S]   removes the owned jumps, chains and boot unit; keeps the network
 #
 # Reboot: apply also writes and enables the owned oneshot polytronx-sandbox-network.service. It runs
 # restore after docker.service and ufw.service and before polytronx-executor-edge.service, so the rules
-# and the IPv6 setting come back on every boot. restore writes no file and runs no systemctl. Only that
-# unit file is written or removed here.
+# and the IPv6 setting come back on every boot. restore writes only the sandbox resolver file (kept by rollback, since the
+# executor still binds it) and runs no systemctl. Only that unit file is written or removed here.
 #
 # Run as root on the executor host. Every command refuses unless this host owns HOST_IP.
 # The network itself is removed by hand, once no container is attached:
@@ -31,6 +31,10 @@ DEFAULT_SUBNET="10.251.7.0/24"
 FWD_CHAIN="POLYTRONX-SBX-FWD"
 IN_CHAIN="POLYTRONX-SBX-IN"
 NETWORK_FORMAT='{{.Driver}} {{index .Options "com.docker.network.bridge.name"}} {{index .Options "com.docker.network.bridge.enable_icc"}} {{.EnableIPv6}} {{range .IPAM.Config}}{{.Subnet}}{{end}}'
+# Mounted over every sandbox's /etc/resolv.conf: runsc cannot reach Docker's embedded resolver on 127.0.0.11, and
+# --dns only feeds that resolver. The executor's buildRunArgs binds this exact path; keep the two in step.
+RESOLV_CONF="${POLYTRONX_RESOLV_CONF:-/etc/polytronx/sandbox-resolv.conf}"
+RESOLV_CONTENT=$'nameserver 1.1.1.1\nnameserver 9.9.9.9\noptions ndots:0'
 UNIT_DIR="${POLYTRONX_UNIT_DIR:-/etc/systemd/system}"
 UNIT_NAME="polytronx-sandbox-network.service"
 OWNER_MARK="# polytronx-owned: sandbox-network"
@@ -234,6 +238,11 @@ check() {
   else
     fail "$IN_CHAIN differs from its expected rules, in order"
   fi
+  if [ -f "$RESOLV_CONF" ] && [ "$(cat "$RESOLV_CONF")" = "$RESOLV_CONTENT" ]; then
+    pass "sandbox resolver file $RESOLV_CONF holds the two public resolvers"
+  else
+    fail "sandbox resolver file $RESOLV_CONF is missing or differs (apply or restore writes it)"
+  fi
   if [ "$(sysctl -n "net.ipv6.conf.$BRIDGE_IF.disable_ipv6" 2>/dev/null || true)" = 1 ]; then
     pass "IPv6 is disabled on $BRIDGE_IF (re-applied on every boot by $UNIT_NAME)"
   else
@@ -253,12 +262,17 @@ check() {
   fi
 }
 
-# The boot path: the network, the owned chains and their jumps, and the IPv6 setting. It writes no unit
-# and runs no systemctl, so a boot cannot rewrite or re-enable anything.
+# The boot path: the network, the owned chains and their jumps, the IPv6 setting, and the sandbox resolver file.
+# It writes no unit and runs no systemctl, so a boot cannot rewrite or re-enable anything.
 restore() {
   host_is_edge || die "this host does not own $HOST_IP; nothing was changed"
   iptables -S DOCKER-USER >/dev/null 2>&1 || die "DOCKER-USER does not exist; start Docker with iptables enabled first"
   ensure_network
+  # An existing directory keeps its mode: other owned material may share it.
+  [ -d "$(dirname "$RESOLV_CONF")" ] || install -d -m 0755 "$(dirname "$RESOLV_CONF")" || die "could not create $(dirname "$RESOLV_CONF")"
+  printf '%s\n' "$RESOLV_CONTENT" >"$RESOLV_CONF.tmp" || die "could not write $RESOLV_CONF.tmp"
+  chmod 0644 "$RESOLV_CONF.tmp" || die "could not set the mode of $RESOLV_CONF.tmp"
+  mv -f "$RESOLV_CONF.tmp" "$RESOLV_CONF" || die "could not install $RESOLV_CONF"
   restore_chain "$FWD_CHAIN" "$(fwd_rules)"
   restore_chain "$IN_CHAIN" "$(in_rules)"
   ensure_jump DOCKER-USER -s "$SUBNET" -j "$FWD_CHAIN"

@@ -110,6 +110,8 @@ describe("buildRunArgs", () => {
       "type=bind,source=/srv/vps-ws/slots/0,target=/workspace",
       "--mount",
       `type=bind,source=${join("/srv/vps-ws/slots/0", "home")},target=/home/sandbox`,
+      "--mount",
+      "type=bind,source=/etc/polytronx/sandbox-resolv.conf,target=/etc/resolv.conf,readonly",
       "--workdir",
       "/workspace",
       "-e",
@@ -150,8 +152,17 @@ describe("buildRunArgs", () => {
       "--userns",
     ])
       assert.equal(args.includes(flag), false, flag);
-    // Two binds and no more: the slot, and the home subdirectory inside that same slot.
-    assert.deepEqual(mountSources(args), [MOUNT.hostPath, join(MOUNT.hostPath, "home")]);
+    // Three binds and no more: the slot, its home subdirectory, and the read-only resolver file.
+    assert.deepEqual(mountSources(args), [
+      MOUNT.hostPath,
+      join(MOUNT.hostPath, "home"),
+      "/etc/polytronx/sandbox-resolv.conf",
+    ]);
+    assert.ok(
+      args.includes(
+        "type=bind,source=/etc/polytronx/sandbox-resolv.conf,target=/etc/resolv.conf,readonly"
+      )
+    );
     assert.equal(
       args.some((arg) => arg.includes("docker.sock")),
       false

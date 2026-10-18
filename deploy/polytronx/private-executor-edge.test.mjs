@@ -193,6 +193,7 @@ function edge(sb, root, args, env = {}) {
     POLYTRONX_EDGE_DIR: `${root}/edge`,
     POLYTRONX_EDGE_CA_DIR: `${root}/edge-ca`,
     POLYTRONX_UNIT_DIR: `${root}/units`,
+    POLYTRONX_RESOLV_CONF: `${root}/sandbox-resolv.conf`,
     ...env,
   });
 }
@@ -216,6 +217,7 @@ const net = (sb, args, env = {}) =>
   runScript(sb, "sandbox-network.sh", args, {
     STUB_STATE: sb.state,
     POLYTRONX_UNIT_DIR: `${sb.root}/units`,
+    POLYTRONX_RESOLV_CONF: `${sb.root}/sandbox-resolv.conf`,
     ...env,
   });
 
@@ -896,6 +898,15 @@ describe("sandbox network", () => {
       false
     );
     assert.equal(existsSync(`${sb.root}/units/polytronx-sandbox-network.service`), false);
+    // The one file it does write: the resolver every sandbox mounts, whole and without a leftover temp file.
+    const resolv = `${sb.root}/sandbox-resolv.conf`;
+    assert.equal(
+      readFileSync(resolv, "utf8"),
+      "nameserver 1.1.1.1\nnameserver 9.9.9.9\noptions ndots:0\n"
+    );
+    // NTFS reports 0666 whatever chmod did; the mode is proven on Linux only.
+    if (process.platform !== "win32") assert.equal(statSync(resolv).mode & 0o777, 0o644);
+    assert.equal(existsSync(`${resolv}.tmp`), false);
   });
 
   it("check fails a chain whose rules are reordered, or edited, while the count stays right", () => {
@@ -1015,5 +1026,21 @@ describe("sandbox network", () => {
       result.stdout,
       /FAIL {2}boot unit polytronx-sandbox-network\.service is not owned and enabled/
     );
+    assert.match(result.stdout, /FAIL {2}sandbox resolver file .* is missing or differs/);
+  });
+
+  it("check fails an edited resolver file, passes the restored one, and the executor binds the same path", () => {
+    const sb = netSandbox();
+    const resolv = `${sb.root}/sandbox-resolv.conf`;
+    assert.equal(net(sb, ["restore"]).status, 0);
+    writeFileSync(resolv, "nameserver 127.0.0.1\n");
+    assert.match(net(sb, ["check"]).stdout, /FAIL {2}sandbox resolver file/);
+    writeFileSync(resolv, "nameserver 1.1.1.1\nnameserver 9.9.9.9\noptions ndots:0\n");
+    assert.match(net(sb, ["check"]).stdout, /PASS {2}sandbox resolver file/);
+    const script = readFileSync(`${DEPLOY_DIR}/sandbox-network.sh`, "utf8");
+    const executor = readFileSync(`${DEPLOY_DIR}/../../packages/vps-executor/src/docker.ts`, "utf8");
+    const shellDefault = script.match(/POLYTRONX_RESOLV_CONF:-([^}]+)\}/)?.[1];
+    assert.ok(shellDefault);
+    assert.ok(executor.includes(`const RESOLV_CONF_SOURCE = "${shellDefault}";`));
   });
 });
