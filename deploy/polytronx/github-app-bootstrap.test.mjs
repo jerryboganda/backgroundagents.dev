@@ -93,7 +93,6 @@ function conversion(overrides = {}) {
       contents: "write",
       issues: "write",
       pull_requests: "write",
-      email_addresses: "read",
       metadata: "read",
     },
     ...overrides,
@@ -122,8 +121,10 @@ function githubRoutes({
   repos = [{ full_name: PILOT.repoFullName }],
   totalCount = repos.length,
   link = "",
+  appPermissions = { ...INSTALL_PERMISSIONS, email_addresses: "read" },
 } = {}) {
   return {
+    "GET /app": { json: { id: 4242, permissions: appPermissions } },
     "GET /app/installations": { json: installations, link },
     "POST /app/installations/999/access_tokens": { status: 201, json: { token: GH_TOKEN } },
     "GET /installation/repositories": { json: { total_count: totalCount, repositories: repos } },
@@ -243,7 +244,6 @@ describe("manifest and conversion", () => {
         contents: "write",
         issues: "write",
         pull_requests: "write",
-        email_addresses: "read",
       },
       request_oauth_on_install: false,
       setup_on_update: false,
@@ -271,8 +271,8 @@ describe("manifest and conversion", () => {
         /pull_requests does not match/,
       ],
       [
-        conversion({ permissions: { ...perms, email_addresses: undefined } }),
-        /email_addresses does not match/,
+        conversion({ permissions: { ...perms, email_addresses: "read" } }),
+        /email_addresses is not expected/,
       ],
       [
         conversion({ permissions: { ...perms, administration: "write" } }),
@@ -921,7 +921,7 @@ describe("verify", () => {
     assert.equal(await fs.readFile(file, "latin1"), APP_ENV);
   });
 
-  it("ignores the account permission on the installation object; the App's copy is checked at conversion", async (t) => {
+  it("ignores the account permission on the installation object; the App's copy is checked through GET /app", async (t) => {
     const dir = await tempDir(t);
     const file = await writeEnv(dir, APP_ENV);
     const withAccount = installation({
@@ -929,6 +929,23 @@ describe("verify", () => {
     });
     await verifyWith(file, fakeGitHub(githubRoutes({ installations: [withAccount] })).fetchImpl);
     assert.equal(await fs.readFile(file, "latin1"), APP_ENV + "GITHUB_APP_INSTALLATION_ID=999\n");
+  });
+
+  it("refuses when the App lacks the Email addresses read permission", async (t) => {
+    const dir = await tempDir(t);
+    const file = await writeEnv(dir, APP_ENV);
+    for (const appPermissions of [
+      INSTALL_PERMISSIONS,
+      { ...INSTALL_PERMISSIONS, email_addresses: "write" },
+    ]) {
+      const github = fakeGitHub(githubRoutes({ appPermissions }));
+      await assert.rejects(verifyWith(file, github.fetchImpl), /Email addresses is not Read-only/);
+      assert.equal(
+        github.calls.some((call) => call.method === "POST"),
+        false
+      );
+    }
+    assert.equal(await fs.readFile(file, "latin1"), APP_ENV);
   });
 
   it("refuses an installation list that spans more than one page", async (t) => {

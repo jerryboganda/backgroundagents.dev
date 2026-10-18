@@ -77,11 +77,12 @@ const DEFAULT_PERMISSIONS = Object.freeze({
   contents: "write",
   issues: "write",
   pull_requests: "write",
-  email_addresses: "read",
 });
 
-// Installation permissions cover repositories and organizations. Account permissions such as
-// email_addresses belong to the App, which conversionToEnvUpdates checks, so they are not compared here.
+// GitHub rejects the account permission email_addresses in a manifest ("Default permission ... resource is
+// not included in the list"), so the owner sets it on the created App and verify checks the App's copy.
+// Installation permissions cover repositories and organizations. Account permissions belong to the App,
+// so they are not compared on the installation.
 const INSTALLATION_PERMISSIONS = Object.freeze({
   contents: "write",
   issues: "write",
@@ -89,6 +90,7 @@ const INSTALLATION_PERMISSIONS = Object.freeze({
   metadata: "read",
 });
 const ACCOUNT_PERMISSIONS = Object.freeze(["email_addresses"]);
+const EMAIL_PERMISSION = "email_addresses";
 
 // ownerUid is only enforced on POSIX. Tests inject the test user's uid and a failing rename.
 const DEFAULT_STORE = Object.freeze({ ownerUid: 0, rename: fs.rename });
@@ -567,6 +569,24 @@ function installationPermissionsMatch(permissions) {
   );
 }
 
+// The sign-in flow reads /user/emails, which needs the App's Email addresses read permission.
+async function assertEmailPermission({ jwt, fetchImpl }) {
+  const response = await github(fetchImpl, `${GITHUB_API_ORIGIN}/app`, {
+    authorization: `Bearer ${jwt}`,
+  });
+  if (response.status !== 200)
+    refuse(
+      `GitHub refused the App JWT (HTTP ${response.status}); check the App ID and private key`
+    );
+  const app = parseJson(response.text);
+  if (!isObject(app) || !isObject(app.permissions)) refuse("App lookup has an unexpected shape");
+  if (app.permissions[EMAIL_PERMISSION] !== "read") {
+    refuse(
+      "App permission Email addresses is not Read-only; set it under Permissions & events > Account permissions"
+    );
+  }
+}
+
 async function pilotInstallation({ jwt, appId, pilot, fetchImpl }) {
   const response = await github(
     fetchImpl,
@@ -676,6 +696,7 @@ export async function verifyInstallation({
   const pem = envValue(text, "GITHUB_APP_PRIVATE_KEY").replace(/\\n/g, "\n");
   const key = loadRsaPrivateKey(pem, "GITHUB_APP_PRIVATE_KEY");
   const jwt = signAppJwt({ appId, key, nowSeconds: Math.floor(now() / 1000) });
+  await assertEmailPermission({ jwt, fetchImpl });
   const installation = await pilotInstallation({ jwt, appId, pilot, fetchImpl });
   await assertOnlyPilotRepository({ jwt, installationId: installation.id, pilot, fetchImpl });
   await writeEnvUpdates(envFile, { GITHUB_APP_INSTALLATION_ID: String(installation.id) }, store);

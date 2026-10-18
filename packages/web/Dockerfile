@@ -46,6 +46,9 @@ COPY packages/shared/ packages/shared/
 COPY packages/web/ packages/web/
 # vitest.config.ts imports this from the root, and next build type-checks it.
 COPY scripts/coverage-policy.ts scripts/coverage-policy.ts
+# next build type-checks every .ts file, and the tests import dev tools (eslint) this workspace-only
+# install leaves out. The image never runs tests, so drop them first.
+RUN find packages/web/src -type f \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -delete
 RUN npm run build -w @open-inspect/shared \
     && npm run build -w @open-inspect/web
 

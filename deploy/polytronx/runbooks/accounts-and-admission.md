@@ -41,10 +41,13 @@ or later. The helper prints no credential value.
    `sudo POLYTRONX_SECRETS_DIR=<secrets dir> node deploy/polytronx/github-app-bootstrap.mjs manifest`.
 4. Owner step: click "Create the GitHub App" while signed in to GitHub as `jerryboganda`. The page
    then shows "Credentials stored. No values shown."
-5. Install the App on `jerryboganda/backgroundagents.dev` only ("Only select repositories"). Check
-   the App's permissions: contents and pull requests write, issues write, email addresses read. If
-   GitHub lists any other repository, change the selection before you run `verify`.
-6. VPS:
+5. Before installing, open the new App's settings (Permissions & events > Account permissions) and
+   set Email addresses to Read-only: GitHub's manifest rejects that permission, and `verify` refuses
+   until it is set. Setting it first avoids a pending permission request on the installation.
+6. Install the App on `jerryboganda/backgroundagents.dev` only ("Only select repositories"). Check
+   the App's permissions: contents and pull requests write, issues write. If GitHub lists any other
+   repository, change the selection before you run `verify`.
+7. VPS:
    `sudo POLYTRONX_SECRETS_DIR=<secrets dir> node deploy/polytronx/github-app-bootstrap.mjs verify`.
    It prints `verify: PASS` or `verify: FAIL: <reason>`. Only PASS writes
    `GITHUB_APP_INSTALLATION_ID`. `verify` mints a token without a repository filter and passes only
@@ -63,9 +66,10 @@ Open before the first live run:
 - The manifest redirect is `http://localhost:8765/manifest/callback`. The manifest docs set no
   scheme or host restriction on `redirect_url`, so only the first live submit shows whether GitHub
   accepts it. If it does not, the flow times out and stores nothing.
-- The `pull_requests` and `email_addresses` keys match the App permissions object in
-  `docs.github.com/en/rest/apps/apps`, which has no `emails` key. The live conversion response is
-  still checked against them, and a mismatch refuses after the App exists (see above).
+- The manifest omits `email_addresses`: GitHub's manifest page rejected it live ("Default permission
+  ... resource is not included in the list"). `verify` reads `GET /app` and requires
+  `email_addresses: read` instead. The live conversion response is checked against the manifest's
+  repository permissions, and a mismatch refuses after the App exists (see above).
 - `full_name` in the `GET /installation/repositories` items is not shown on
   `docs.github.com/en/rest/apps/installations`, so it is unconfirmed. `verify` refuses if it is
   absent.
@@ -76,8 +80,9 @@ Open before the first live run:
   (`packages/control-plane/src/source-control/providers/github-provider.ts:288`). The Issues bullet
   in section 1 lists Issues only for the bot. The owner decides which applies.
 - `email_addresses` is an account permission. The installation object may omit it, so `verify` does
-  not compare it there. The App's copy is compared at conversion. The installation's repository
-  permissions (contents, issues and pull requests write, metadata read) are compared exactly.
+  not compare it there. The App's copy is checked by `verify` through `GET /app`. The installation's
+  repository permissions (contents, issues and pull requests write, metadata read) are compared
+  exactly.
 - Reloading the manifest page keeps the same form and cookie. The page answers 409 only after GitHub
   redirects back with the code, until the flow ends. The helper cannot see the form submit.
 - If the 15-minute window closes while credentials are being written, the write finishes and the
