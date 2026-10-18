@@ -81,10 +81,12 @@ export function rehearsalProblems(config) {
   const services = config.services ?? {};
   const networks = config.networks ?? {};
 
-  if (config.name !== "polytronx-openinspect-rehearsal") problems.push(`project name is ${config.name}`);
+  if (config.name !== "polytronx-openinspect-rehearsal")
+    problems.push(`project name is ${config.name}`);
   problems.push(...pullProblems(services));
   for (const network of ["edge", "egress", "backend"]) {
-    if (networks[network]?.internal !== true) problems.push(`${network} is not internal in the rehearsal`);
+    if (networks[network]?.internal !== true)
+      problems.push(`${network} is not internal in the rehearsal`);
   }
   for (const [name, service] of Object.entries(services)) {
     if (portsOf(service).length > 0) problems.push(`${name} publishes a port in the rehearsal`);
@@ -92,7 +94,8 @@ export function rehearsalProblems(config) {
       const declared = networks[network];
       if (!declared) problems.push(`${name} uses the undeclared network ${network}`);
       else if (declared.internal !== true) problems.push(`${network} can route outside the host`);
-      else if (declared.name === LIVE_EDGE_NETWORK) problems.push(`${name} joins the live edge network`);
+      else if (declared.name === LIVE_EDGE_NETWORK)
+        problems.push(`${name} joins the live edge network`);
     }
   }
   return problems;

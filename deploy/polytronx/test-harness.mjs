@@ -51,7 +51,13 @@ export function makeSandbox({ replace = {} } = {}) {
   const deploy = `${root}/deploy`;
   mkdirSync(bin);
   cpSync(DEPLOY_DIR, deploy, { recursive: true });
-  for (const name of ["docker", "curl", "df", ...(HAS_FLOCK ? [] : ["flock"]), ...(IS_WINDOWS ? ["stat"] : [])]) {
+  for (const name of [
+    "docker",
+    "curl",
+    "df",
+    ...(HAS_FLOCK ? [] : ["flock"]),
+    ...(IS_WINDOWS ? ["stat"] : []),
+  ]) {
     installStub(bin, name);
   }
   for (const [target, stub] of Object.entries(replace)) {
@@ -99,7 +105,12 @@ export function writeRelease(sandbox, name = "release.env", overrides = {}) {
     ...overrides,
   };
   const path = `${sandbox.root}/${name}`;
-  writeFileSync(path, Object.entries(values).map(([key, value]) => `${key}=${value}`).join("\n") + "\n");
+  writeFileSync(
+    path,
+    Object.entries(values)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n") + "\n"
+  );
   return path;
 }
 

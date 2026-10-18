@@ -62,9 +62,7 @@ function roleOf(path: string, userId: string): unknown {
   return withStore(
     path,
     (db) =>
-      db
-        .prepare("SELECT role_id FROM user_role_assignments WHERE user_id = ?")
-        .get(userId)?.role_id
+      db.prepare("SELECT role_id FROM user_role_assignments WHERE user_id = ?").get(userId)?.role_id
   );
 }
 
@@ -82,9 +80,9 @@ function bootstrapAuditCount(path: string): number {
 function addOwner(path: string, userId: string): void {
   withStore(path, (db) => {
     db.prepare("INSERT INTO users (id, created_at, updated_at) VALUES (?, 1, 1)").run(userId);
-    db.prepare("UPDATE user_role_assignments SET role_id = 'role_builtin_owner' WHERE user_id = ?").run(
-      userId
-    );
+    db.prepare(
+      "UPDATE user_role_assignments SET role_id = 'role_builtin_owner' WHERE user_id = ?"
+    ).run(userId);
   });
 }
 
@@ -126,11 +124,9 @@ describe("Node Owner bootstrap against a migrated store", () => {
 
     assert.equal(outcome.status, "executed");
     assert.equal(roleOf(storePath, USER_ID), "role_builtin_owner");
-    const audit = withStore(
-      storePath,
-      (db) =>
-        ({ ...db.prepare("SELECT * FROM authorization_audit_events WHERE action = ?").get(AUDIT_ACTION) })
-    ) as Record<string, unknown>;
+    const audit = withStore(storePath, (db) => ({
+      ...db.prepare("SELECT * FROM authorization_audit_events WHERE action = ?").get(AUDIT_ACTION),
+    })) as Record<string, unknown>;
     assert.deepEqual(
       {
         id: audit.id,

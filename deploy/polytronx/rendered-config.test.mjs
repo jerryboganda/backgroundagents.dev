@@ -19,8 +19,16 @@ function productionRender() {
         ports: [{ host_ip: "127.0.0.1", published: "13080", target: 3000 }],
         networks: { edge: { aliases: ["polytronx-openinspect-web"] }, backend: {} },
       },
-      litestream: { image: "litestream/litestream:test", pull_policy: "never", networks: { backend: {} } },
-      "object-store": { image: "chrislusf/seaweedfs:test", pull_policy: "never", networks: { backend: {} } },
+      litestream: {
+        image: "litestream/litestream:test",
+        pull_policy: "never",
+        networks: { backend: {} },
+      },
+      "object-store": {
+        image: "chrislusf/seaweedfs:test",
+        pull_policy: "never",
+        networks: { backend: {} },
+      },
     },
     networks: {
       edge: { name: "polytronx-edge", external: true },
@@ -34,10 +42,26 @@ function rehearsalRender() {
   return {
     name: "polytronx-openinspect-rehearsal",
     services: {
-      app: { image: "open-inspect-control-plane:test", pull_policy: "never", networks: { edge: {}, backend: {}, egress: {} } },
-      web: { image: "open-inspect-web:test", pull_policy: "never", networks: { edge: {}, backend: {} } },
-      litestream: { image: "litestream/litestream:test", pull_policy: "never", networks: { backend: {} } },
-      "object-store": { image: "chrislusf/seaweedfs:test", pull_policy: "never", networks: { backend: {} } },
+      app: {
+        image: "open-inspect-control-plane:test",
+        pull_policy: "never",
+        networks: { edge: {}, backend: {}, egress: {} },
+      },
+      web: {
+        image: "open-inspect-web:test",
+        pull_policy: "never",
+        networks: { edge: {}, backend: {} },
+      },
+      litestream: {
+        image: "litestream/litestream:test",
+        pull_policy: "never",
+        networks: { backend: {} },
+      },
+      "object-store": {
+        image: "chrislusf/seaweedfs:test",
+        pull_policy: "never",
+        networks: { backend: {} },
+      },
     },
     networks: {
       edge: { name: "polytronx-rehearsal-edge", internal: true },
@@ -55,7 +79,9 @@ describe("production render", () => {
   it("flags a missing unique edge alias, which is what NPM resolves", () => {
     const config = productionRender();
     config.services.web.networks.edge.aliases = [];
-    assert.deepEqual(productionProblems(config), ["web lacks the edge network alias polytronx-openinspect-web"]);
+    assert.deepEqual(productionProblems(config), [
+      "web lacks the edge network alias polytronx-openinspect-web",
+    ]);
   });
 
   it("flags a port published on every interface", () => {
@@ -66,7 +92,9 @@ describe("production render", () => {
 
   it("flags a published object store and an object store on the edge network", () => {
     const config = productionRender();
-    config.services["object-store"].ports = [{ host_ip: "127.0.0.1", published: "8333", target: 8333 }];
+    config.services["object-store"].ports = [
+      { host_ip: "127.0.0.1", published: "8333", target: 8333 },
+    ];
     config.services["object-store"].networks.edge = {};
     assert.deepEqual(productionProblems(config), [
       "object-store is attached to the edge network",
@@ -78,7 +106,9 @@ describe("production render", () => {
   it("flags an edge network that is not the external live network", () => {
     const config = productionRender();
     config.networks.edge = { name: "polytronx-edge", external: false };
-    assert.deepEqual(productionProblems(config), ["edge is not the external polytronx-edge network"]);
+    assert.deepEqual(productionProblems(config), [
+      "edge is not the external polytronx-edge network",
+    ]);
   });
 
   it("flags an image service that can pull at up time", () => {
@@ -111,7 +141,10 @@ describe("rehearsal render", () => {
   it("flags a rehearsal service that joins the live edge network by name", () => {
     const config = rehearsalRender();
     config.networks.edge = { name: "polytronx-edge", internal: true };
-    assert.deepEqual(rehearsalProblems(config), ["app joins the live edge network", "web joins the live edge network"]);
+    assert.deepEqual(rehearsalProblems(config), [
+      "app joins the live edge network",
+      "web joins the live edge network",
+    ]);
   });
 
   it("flags a render that is not the rehearsal project", () => {

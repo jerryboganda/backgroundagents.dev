@@ -2,13 +2,33 @@
 // scratch host: its host tools are stubs (testdata/stubs/host-tool) that answer from a state directory,
 // so nothing is mounted, formatted or changed.
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { DEPLOY_DIR, makeSandbox, runScript, stubCalls } from "./test-harness.mjs";
 
 const HOST_TOOL = `${DEPLOY_DIR}/testdata/stubs/host-tool`;
-const TOOLS = ["findmnt", "losetup", "blkid", "fallocate", "mkfs.ext4", "mount", "stat", "df", "id", "chmod", "systemctl"];
+const TOOLS = [
+  "findmnt",
+  "losetup",
+  "blkid",
+  "fallocate",
+  "mkfs.ext4",
+  "mount",
+  "stat",
+  "df",
+  "id",
+  "chmod",
+  "systemctl",
+];
 const SLOTS = [0, 1, 2, 3, 4, 5];
 const DEFAULT_FSTAB = "UUID=root / ext4 defaults 0 1\nproc /proc proc defaults 0 0\n";
 const MUTATING = /^(fallocate|mkfs\.ext4|mount|chmod|systemctl)\b/;
@@ -21,7 +41,12 @@ function scratchHost({ freeGiB = 200 } = {}) {
     copyFileSync(HOST_TOOL, `${sb.bin}/${name}`);
     chmodSync(`${sb.bin}/${name}`, 0o755);
   }
-  const host = { sb, base: `${sb.root}/srv/vps-ws`, fstab: `${sb.root}/fstab`, state: `${sb.root}/host-state` };
+  const host = {
+    sb,
+    base: `${sb.root}/srv/vps-ws`,
+    fstab: `${sb.root}/fstab`,
+    state: `${sb.root}/host-state`,
+  };
   mkdirSync(host.state);
   writeFileSync(host.fstab, DEFAULT_FSTAB);
   host.env = {
@@ -42,7 +67,11 @@ const slotDir = (h, k) => `${h.base}/slots/${k}`;
 const run = (h, args) => runScript(h.sb, "workspace-slots.sh", args, h.env);
 const mutations = (h) => stubCalls(h.sb).filter((line) => MUTATING.test(line));
 const resetLog = (h) => writeFileSync(h.sb.log, "");
-const withoutComments = (text) => text.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+const withoutComments = (text) =>
+  text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
 
 describe("workspace-slots.sh --apply on a new host", () => {
   it("creates six images with the pinned flags, mounts each slot by its own path, and keeps the rest of fstab", () => {
@@ -52,7 +81,9 @@ describe("workspace-slots.sh --apply on a new host", () => {
     const calls = stubCalls(h.sb);
     for (const k of SLOTS) {
       assert.ok(calls.includes(`fallocate -l 10G ${image(h, k)}`), `fallocate for slot ${k}`);
-      assert.ok(calls.includes(`mkfs.ext4 -q -F -m 0 -N 262144 -E root_owner=1000:1000 ${image(h, k)}`));
+      assert.ok(
+        calls.includes(`mkfs.ext4 -q -F -m 0 -N 262144 -E root_owner=1000:1000 ${image(h, k)}`)
+      );
       assert.ok(calls.includes(`mount ${slotDir(h, k)}`), `explicit mount of slot ${k}`);
       assert.ok(calls.includes(`chmod 700 ${slotDir(h, k)}`));
       assert.match(result.stdout, new RegExp(`PASS  slot ${k}: `));
@@ -61,13 +92,22 @@ describe("workspace-slots.sh --apply on a new host", () => {
     assert.equal(calls.filter((line) => line === "systemctl daemon-reload").length, 1);
 
     const lines = readFileSync(h.fstab, "utf8").split("\n");
-    assert.deepEqual(lines.slice(0, 2), ["UUID=root / ext4 defaults 0 1", "proc /proc proc defaults 0 0"]);
+    assert.deepEqual(lines.slice(0, 2), [
+      "UUID=root / ext4 defaults 0 1",
+      "proc /proc proc defaults 0 0",
+    ]);
     for (const k of SLOTS) {
-      assert.ok(lines.includes(`${image(h, k)} ${slotDir(h, k)} ext4 loop,nosuid,nodev,noatime,nofail,x-systemd.before=docker.service 0 0`));
+      assert.ok(
+        lines.includes(
+          `${image(h, k)} ${slotDir(h, k)} ext4 loop,nosuid,nodev,noatime,nofail,x-systemd.before=docker.service 0 0`
+        )
+      );
     }
     assert.ok(
-      readdirSync(dirname(h.fstab)).some((name) => name.startsWith("fstab.polytronx-workspace-") && name.endsWith(".bak")),
-      "fstab is backed up before it changes",
+      readdirSync(dirname(h.fstab)).some(
+        (name) => name.startsWith("fstab.polytronx-workspace-") && name.endsWith(".bak")
+      ),
+      "fstab is backed up before it changes"
     );
   });
 
@@ -129,9 +169,15 @@ describe("workspace-slots.sh --apply refuses and changes nothing", () => {
     const h = scratchHost({ freeGiB: 50 });
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL {2}-?\d+ GiB free on .* after allocation; 30 GiB must stay free/);
+    assert.match(
+      result.stdout,
+      /FAIL {2}-?\d+ GiB free on .* after allocation; 30 GiB must stay free/
+    );
     // Empty base directories are created before this check; no image, format, mount or fstab change is.
-    assert.deepEqual(stubCalls(h.sb).filter((line) => /^(fallocate|mkfs\.ext4|mount)\b/.test(line)), []);
+    assert.deepEqual(
+      stubCalls(h.sb).filter((line) => /^(fallocate|mkfs\.ext4|mount)\b/.test(line)),
+      []
+    );
     assert.equal(readFileSync(h.fstab, "utf8"), DEFAULT_FSTAB);
   });
 });
@@ -141,7 +187,8 @@ describe("workspace-slots.sh --check", () => {
     const h = scratchHost();
     const result = run(h, ["--check"]);
     assert.equal(result.status, 1);
-    for (const k of SLOTS) assert.match(result.stdout, new RegExp(`FAIL  slot ${k}: image missing`));
+    for (const k of SLOTS)
+      assert.match(result.stdout, new RegExp(`FAIL  slot ${k}: image missing`));
     assert.deepEqual(mutations(h), []);
   });
 
@@ -176,7 +223,10 @@ describe("the host contract in the source", () => {
   });
 
   it("orders every slot mount before docker.service, and never restarts Docker or writes a Docker unit override", () => {
-    assert.match(script, /MOUNT_OPTS="loop,nosuid,nodev,noatime,nofail,x-systemd\.before=docker\.service"/);
+    assert.match(
+      script,
+      /MOUNT_OPTS="loop,nosuid,nodev,noatime,nofail,x-systemd\.before=docker\.service"/
+    );
     assert.doesNotMatch(script, /systemctl (restart|reload|start|stop|enable)|docker\.service\.d/);
   });
 
@@ -193,7 +243,14 @@ describe("the executor's view of the slots", () => {
     assert.match(compose, /source: \/srv\/vps-ws\/slots\n\s+target: \/srv\/vps-ws\/slots/);
     assert.match(compose, /propagation: rprivate/);
     assert.match(compose, /create_host_path: false/);
-    for (const banned of ["/srv/vps-ws/images", "rshared", "privileged", "SYS_ADMIN", "devices:", "cap_add"]) {
+    for (const banned of [
+      "/srv/vps-ws/images",
+      "rshared",
+      "privileged",
+      "SYS_ADMIN",
+      "devices:",
+      "cap_add",
+    ]) {
       assert.ok(!compose.includes(banned), `compose.executor.yml must not contain ${banned}`);
     }
   });
@@ -210,7 +267,10 @@ describe("the executor's view of the slots", () => {
   it("keeps the executor's control-plane URL out of the dashboard release template, and has preflight run both read-only checks", () => {
     const template = read("templates/release.env.template");
     assert.doesNotMatch(template, /VPS_EXECUTOR_/);
-    assert.match(read("runbooks/executor-host.md"), /^\s*VPS_EXECUTOR_CONTROL_PLANE_URL=<the trusted control plane's https URL>$/m);
+    assert.match(
+      read("runbooks/executor-host.md"),
+      /^\s*VPS_EXECUTOR_CONTROL_PLANE_URL=<the trusted control plane's https URL>$/m
+    );
     assert.doesNotMatch(template, /TTL|\bEXECUTOR_(BIND_ADDRESS|WORKSPACE_SLOTS)\b/);
     const preflight = read("preflight-executor.sh");
     assert.match(preflight, /workspace-slots\.sh" --check/);

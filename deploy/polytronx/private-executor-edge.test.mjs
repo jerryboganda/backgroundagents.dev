@@ -6,13 +6,23 @@
 // Docker, systemd or a certificate authority. The Caddy archive is a real tar.gz with a stub inside;
 // sha256sum is stubbed to report the pinned digest, since no test can produce the published archive.
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { describe, it } from "node:test";
 import { DEPLOY_DIR, makeSandbox, runScript, runSnippet, stubCalls } from "./test-harness.mjs";
 
 const SUBNET = "10.251.7.0/24";
 const KEY_HEX = "a".repeat(64);
-const UFW_POLICY = "Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n";
+const UFW_POLICY =
+  "Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n";
 const UFW_DEFAULT = `${UFW_POLICY}22/tcp ALLOW IN Anywhere\n`;
 
 const IP_STUB = 'echo "2: eth0    inet ${STUB_HOST_IP:-172.235.26.148}/24 scope global eth0"';
@@ -48,7 +58,9 @@ exit 0
 // The digest the script pins, read from the script so the tests follow it. A real archive cannot carry
 // the published digest, so sha256sum reports the pin for whatever archive it is given; STUB_ARCHIVE_SHA256
 // overrides that for the refusal test.
-const CADDY_PIN = /^CADDY_ARCHIVE_SHA256="([0-9a-f]{64})"$/m.exec(readFileSync(`${DEPLOY_DIR}/private-executor-edge.sh`, "utf8"))[1];
+const CADDY_PIN = /^CADDY_ARCHIVE_SHA256="([0-9a-f]{64})"$/m.exec(
+  readFileSync(`${DEPLOY_DIR}/private-executor-edge.sh`, "utf8")
+)[1];
 const SHA_STUB = `echo "\${STUB_ARCHIVE_SHA256:-${CADDY_PIN}}  $1"`;
 
 const UFW_STUB = `
@@ -138,7 +150,9 @@ const bashRoot = (sb) => runSnippet(sb, "pwd").stdout.trim();
 /** The rules a chain holds as the restore wrote them, without the chain name. */
 function chainRules(sb, chain) {
   const prefix = `restore-line -A ${chain} `;
-  return stubCalls(sb).filter((line) => line.startsWith(prefix)).map((line) => line.slice(prefix.length));
+  return stubCalls(sb)
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length));
 }
 
 /** The command inside a container-mode unit line such as ExecStop=/bin/sh -c '...', with docker resolved on PATH. */
@@ -162,7 +176,10 @@ function edgeSandbox(ufw = UFW_DEFAULT) {
   stub(sb, "docker", "exit 0");
   // The official archive's shape: one file named caddy, which the script extracts and installs.
   mkdirSync(`${sb.root}/archive`);
-  writeFileSync(`${sb.root}/archive/caddy`, `#!/usr/bin/env bash\necho "caddy $*" >> "$STUB_LOG"\n${CADDY_STUB}\n`);
+  writeFileSync(
+    `${sb.root}/archive/caddy`,
+    `#!/usr/bin/env bash\necho "caddy $*" >> "$STUB_LOG"\n${CADDY_STUB}\n`
+  );
   chmodSync(`${sb.root}/archive/caddy`, 0o755);
   // Run from inside the sandbox: GNU tar reads a drive letter in an argument as a remote host.
   const made = runSnippet(sb, "cd archive && tar -czf ../caddy_linux_amd64.tar.gz caddy");
@@ -196,7 +213,11 @@ function netSandbox() {
 }
 
 const net = (sb, args, env = {}) =>
-  runScript(sb, "sandbox-network.sh", args, { STUB_STATE: sb.state, POLYTRONX_UNIT_DIR: `${sb.root}/units`, ...env });
+  runScript(sb, "sandbox-network.sh", args, {
+    STUB_STATE: sb.state,
+    POLYTRONX_UNIT_DIR: `${sb.root}/units`,
+    ...env,
+  });
 
 describe("private executor edge", () => {
   it("renders TLS for the fixed scope, with no plaintext listener, and writes nothing", () => {
@@ -236,7 +257,10 @@ describe("private executor edge", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /does not own 172\.235\.26\.148/);
     assert.equal(existsSync(`${sb.root}/edge`), false);
-    assert.equal(stubCalls(sb).some((line) => /^(openssl|ufw|systemctl|sha256sum) /.test(line)), false);
+    assert.equal(
+      stubCalls(sb).some((line) => /^(openssl|ufw|systemctl|sha256sum) /.test(line)),
+      false
+    );
   });
 
   it("refuses unknown options, so the scope cannot be widened from the command line", () => {
@@ -253,7 +277,10 @@ describe("private executor edge", () => {
     const result = edge(sb, root, applyArgs(root));
     assert.equal(result.status, 1);
     assert.match(result.stderr, /ufw is not active/);
-    assert.equal(stubCalls(sb).some((line) => line.startsWith("ufw allow")), false);
+    assert.equal(
+      stubCalls(sb).some((line) => line.startsWith("ufw allow")),
+      false
+    );
   });
 
   it("refuses existing certificates that do not carry the edge address, and replaces nothing", () => {
@@ -262,7 +289,8 @@ describe("private executor edge", () => {
     mkdirSync(`${sb.root}/edge/tls`, { recursive: true });
     mkdirSync(`${sb.root}/edge-ca`);
     for (const file of ["ca.key", "ca.crt"]) writeFileSync(`${sb.root}/edge-ca/${file}`, "old\n");
-    for (const file of ["server.key", "server.crt"]) writeFileSync(`${sb.root}/edge/tls/${file}`, "old\n");
+    for (const file of ["server.key", "server.crt"])
+      writeFileSync(`${sb.root}/edge/tls/${file}`, "old\n");
     const result = edge(sb, root, applyArgs(root), { STUB_SAN: "10.9.9.9" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /lacks the IP SAN 172\.235\.26\.148/);
@@ -311,16 +339,24 @@ describe("private executor edge", () => {
     }
   });
 
-  it("refuses a directory reached through a symlink, which the path check would otherwise follow", { skip: process.platform === "win32" && "creating a symlink needs privileges on Windows; the Linux runner checks this" }, () => {
-    const sb = edgeSandbox();
-    const root = bashRoot(sb);
-    mkdirSync(`${sb.root}/real-ca`);
-    symlinkSync(`${sb.root}/real-ca`, `${sb.root}/ca-link`);
-    const result = edge(sb, root, ["render"], { POLYTRONX_EDGE_CA_DIR: `${root}/ca-link` });
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /must be written as resolved paths/);
-    assert.equal(existsSync(`${sb.root}/edge`), false);
-  });
+  it(
+    "refuses a directory reached through a symlink, which the path check would otherwise follow",
+    {
+      skip:
+        process.platform === "win32" &&
+        "creating a symlink needs privileges on Windows; the Linux runner checks this",
+    },
+    () => {
+      const sb = edgeSandbox();
+      const root = bashRoot(sb);
+      mkdirSync(`${sb.root}/real-ca`);
+      symlinkSync(`${sb.root}/real-ca`, `${sb.root}/ca-link`);
+      const result = edge(sb, root, ["render"], { POLYTRONX_EDGE_CA_DIR: `${root}/ca-link` });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /must be written as resolved paths/);
+      assert.equal(existsSync(`${sb.root}/edge`), false);
+    }
+  );
 
   it("refuses to overwrite a Caddyfile it did not write", () => {
     const sb = edgeSandbox();
@@ -340,43 +376,71 @@ describe("private executor edge", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /private-executor-edge: no blockers/);
     assert.equal(stubCalls(sb).filter((line) => line.startsWith("ufw allow")).length, 1);
-    assert.match(readFileSync(`${sb.state}/ufw-status`, "utf8"), /19443\/tcp ALLOW 185\.252\.233\.186/);
+    assert.match(
+      readFileSync(`${sb.state}/ufw-status`, "utf8"),
+      /19443\/tcp ALLOW 185\.252\.233\.186/
+    );
     if (process.platform !== "win32") {
       assert.equal(statSync(`${sb.root}/edge-ca/ca.key`).mode & 0o777, 0o600, "ca.key");
       assert.equal(statSync(`${sb.root}/edge/tls/server.key`).mode & 0o777, 0o600, "server.key");
     }
-    assert.equal(existsSync(`${sb.root}/edge/tls/ca.key`), false, "the CA key stays out of the edge directory");
+    assert.equal(
+      existsSync(`${sb.root}/edge/tls/ca.key`),
+      false,
+      "the CA key stays out of the edge directory"
+    );
     assert.ok(existsSync(`${sb.root}/edge/bin/caddy-2.11.7`));
     const unit = readFileSync(`${sb.root}/units/polytronx-executor-edge.service`, "utf8");
-    assert.match(unit, /^ExecStart="[^"]*\/edge\/bin\/caddy-2\.11\.7" run --config ".*\/edge\/Caddyfile" --adapter caddyfile$/m);
-    assert.match(unit, /^After=network-online\.target docker\.service polytronx-sandbox-network\.service$/m);
-    assert.ok(unit.split("\n").includes(`InaccessiblePaths=${root}/edge-ca`), "the proxy cannot read the CA directory");
+    assert.match(
+      unit,
+      /^ExecStart="[^"]*\/edge\/bin\/caddy-2\.11\.7" run --config ".*\/edge\/Caddyfile" --adapter caddyfile$/m
+    );
+    assert.match(
+      unit,
+      /^After=network-online\.target docker\.service polytronx-sandbox-network\.service$/m
+    );
+    assert.ok(
+      unit.split("\n").includes(`InaccessiblePaths=${root}/edge-ca`),
+      "the proxy cannot read the CA directory"
+    );
 
     result = edge(sb, root, applyArgs(root));
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /unchanged/);
     assert.equal(stubCalls(sb).filter((line) => line.startsWith("ufw allow")).length, 1);
-    assert.equal(readdirSync(`${sb.root}/edge`).some((file) => file.includes(".bak.")), false);
+    assert.equal(
+      readdirSync(`${sb.root}/edge`).some((file) => file.includes(".bak.")),
+      false
+    );
 
     const caddyfile = `${sb.root}/edge/Caddyfile`;
     writeFileSync(caddyfile, `${readFileSync(caddyfile, "utf8")}# operator note\n`);
     result = edge(sb, root, applyArgs(root));
     assert.equal(result.status, 0, result.stderr);
-    const backups = readdirSync(`${sb.root}/edge`).filter((file) => file.startsWith("Caddyfile.bak."));
+    const backups = readdirSync(`${sb.root}/edge`).filter((file) =>
+      file.startsWith("Caddyfile.bak.")
+    );
     assert.equal(backups.length, 1);
     assert.match(readFileSync(`${sb.root}/edge/${backups[0]}`, "utf8"), /# operator note/);
     assert.doesNotMatch(readFileSync(caddyfile, "utf8"), /# operator note/);
   });
 
-  it("refuses a private key that is not mode 0600 at check", { skip: process.platform === "win32" && "NTFS keeps no POSIX modes; the Linux runner checks this" }, () => {
-    const sb = edgeSandbox();
-    const root = bashRoot(sb);
-    assert.equal(edge(sb, root, applyArgs(root)).status, 0);
-    chmodSync(`${sb.root}/edge/tls/server.key`, 0o644);
-    const result = edge(sb, root, ["check"]);
-    assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL {2}.*server\.key is not mode 0600/);
-  });
+  it(
+    "refuses a private key that is not mode 0600 at check",
+    {
+      skip:
+        process.platform === "win32" && "NTFS keeps no POSIX modes; the Linux runner checks this",
+    },
+    () => {
+      const sb = edgeSandbox();
+      const root = bashRoot(sb);
+      assert.equal(edge(sb, root, applyArgs(root)).status, 0);
+      chmodSync(`${sb.root}/edge/tls/server.key`, 0o644);
+      const result = edge(sb, root, ["check"]);
+      assert.equal(result.status, 1);
+      assert.match(result.stdout, /FAIL {2}.*server\.key is not mode 0600/);
+    }
+  );
 
   it("container mode refuses a tag, admits a digest, and mounts only the edge directory read-only", () => {
     const sb = edgeSandbox();
@@ -384,7 +448,13 @@ describe("private executor edge", () => {
     const tag = edge(sb, root, ["apply", "--proxy", "container", "--caddy-image", "caddy:2"]);
     assert.equal(tag.status, 1);
     assert.match(tag.stderr, /not reproducible/);
-    const pinned = edge(sb, root, ["apply", "--proxy", "container", "--caddy-image", `caddy@sha256:${KEY_HEX}`]);
+    const pinned = edge(sb, root, [
+      "apply",
+      "--proxy",
+      "container",
+      "--caddy-image",
+      `caddy@sha256:${KEY_HEX}`,
+    ]);
     assert.equal(pinned.status, 0, pinned.stderr);
     const unit = readFileSync(`${sb.root}/units/polytronx-executor-edge.service`, "utf8");
     assert.match(unit, /--network host --read-only --cap-drop ALL/);
@@ -397,13 +467,28 @@ describe("private executor edge", () => {
     const sb = edgeSandbox();
     const root = bashRoot(sb);
     stub(sb, "docker", DOCKER_OWNED_STUB);
-    assert.equal(edge(sb, root, ["apply", "--proxy", "container", "--caddy-image", `caddy@sha256:${KEY_HEX}`]).status, 0);
+    assert.equal(
+      edge(sb, root, ["apply", "--proxy", "container", "--caddy-image", `caddy@sha256:${KEY_HEX}`])
+        .status,
+      0
+    );
     const unit = readFileSync(`${sb.root}/units/polytronx-executor-edge.service`, "utf8");
-    assert.ok(unit.split("\n").includes(
-      "ExecStartPre=-/bin/sh -c '/usr/bin/docker ps -aq --filter label=io.polytronx.owner=private-executor-edge | xargs -r /usr/bin/docker rm -f'",
-    ));
-    assert.match(unit, /^ExecStart=\/usr\/bin\/docker run --rm --name polytronx-executor-edge --label io\.polytronx\.owner=private-executor-edge --network host /m);
-    assert.doesNotMatch(unit, /docker (rm|stop) .*polytronx-executor-edge/, "no removal or stop by name alone");
+    assert.ok(
+      unit
+        .split("\n")
+        .includes(
+          "ExecStartPre=-/bin/sh -c '/usr/bin/docker ps -aq --filter label=io.polytronx.owner=private-executor-edge | xargs -r /usr/bin/docker rm -f'"
+        )
+    );
+    assert.match(
+      unit,
+      /^ExecStart=\/usr\/bin\/docker run --rm --name polytronx-executor-edge --label io\.polytronx\.owner=private-executor-edge --network host /m
+    );
+    assert.doesNotMatch(
+      unit,
+      /docker (rm|stop) .*polytronx-executor-edge/,
+      "no removal or stop by name alone"
+    );
     const run = (key) => runSnippet(sb, unitShell(unit, key), { STUB_STATE: sb.state });
     // A foreign container holds the name without the label: neither the cleanup nor the stop touches it.
     writeFileSync(`${sb.state}/containers`, "f1\tpolytronx-executor-edge\t\nx1\tother\t\n");
@@ -412,7 +497,10 @@ describe("private executor edge", () => {
     assert.equal(existsSync(`${sb.state}/removed`), false, "a foreign container is not removed");
     assert.equal(existsSync(`${sb.state}/stopped`), false, "a foreign container is not stopped");
     // A leftover this unit labelled is removed before the start and stopped on stop; the other container is kept.
-    writeFileSync(`${sb.state}/containers`, "o1\tpolytronx-executor-edge\tio.polytronx.owner=private-executor-edge\nx1\tother\t\n");
+    writeFileSync(
+      `${sb.state}/containers`,
+      "o1\tpolytronx-executor-edge\tio.polytronx.owner=private-executor-edge\nx1\tother\t\n"
+    );
     assert.equal(run("ExecStartPre").status, 0);
     assert.equal(readFileSync(`${sb.state}/removed`, "utf8"), "o1\n");
     assert.equal(run("ExecStop").status, 0);
@@ -427,7 +515,10 @@ describe("private executor edge", () => {
     assert.match(result.stderr, /does not match the pinned SHA-256 of Caddy 2\.11\.7/);
     assert.equal(existsSync(`${sb.root}/edge/bin`), false);
     assert.equal(existsSync(`${sb.root}/edge/Caddyfile`), false);
-    assert.equal(stubCalls(sb).some((line) => line.startsWith("ufw allow")), false);
+    assert.equal(
+      stubCalls(sb).some((line) => line.startsWith("ufw allow")),
+      false
+    );
   });
 
   it("binary mode refuses to replace a binary at the pinned path that differs from the archive", () => {
@@ -463,13 +554,23 @@ describe("private executor edge", () => {
     assert.doesNotMatch(status, /19443/);
     assert.match(status, /22\/tcp/);
     assert.equal(existsSync(`${sb.root}/edge/Caddyfile`), false);
-    assert.ok(readdirSync(`${sb.root}/edge`).some((file) => file.startsWith("Caddyfile.rolled-back.")));
+    assert.ok(
+      readdirSync(`${sb.root}/edge`).some((file) => file.startsWith("Caddyfile.rolled-back."))
+    );
     assert.ok(existsSync(`${sb.root}/edge/tls/server.key`));
     assert.ok(existsSync(`${sb.root}/edge-ca/ca.key`));
     assert.ok(existsSync(`${sb.root}/edge/bin/caddy-2.11.7`));
-    assert.ok(stubCalls(sb).includes("ufw --force delete allow from 185.252.233.186 to any port 19443 proto tcp"));
+    assert.ok(
+      stubCalls(sb).includes(
+        "ufw --force delete allow from 185.252.233.186 to any port 19443 proto tcp"
+      )
+    );
     assert.ok(stubCalls(sb).includes("systemctl disable --now polytronx-executor-edge.service"));
-    assert.ok(readdirSync(`${sb.root}/units`).some((file) => file.startsWith("polytronx-executor-edge.service.rolled-back.")));
+    assert.ok(
+      readdirSync(`${sb.root}/units`).some((file) =>
+        file.startsWith("polytronx-executor-edge.service.rolled-back.")
+      )
+    );
   });
 
   it("rollback leaves a firewall rule it did not add, including one that matches the edge rule but for its comment", () => {
@@ -479,7 +580,10 @@ describe("private executor edge", () => {
     const result = edge(sb, root, ["rollback"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(`${sb.state}/ufw-status`, "utf8"), rules);
-    assert.equal(stubCalls(sb).some((line) => line.startsWith("ufw --force delete")), false);
+    assert.equal(
+      stubCalls(sb).some((line) => line.startsWith("ufw --force delete")),
+      false
+    );
     assert.match(result.stderr, /not as a rule this script added/);
   });
 
@@ -491,7 +595,10 @@ describe("private executor edge", () => {
     const result = edge(sb, root, ["rollback"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(unit, "utf8"), "[Unit]\nDescription=written by someone else\n");
-    assert.equal(stubCalls(sb).some((line) => line.startsWith("systemctl disable")), false);
+    assert.equal(
+      stubCalls(sb).some((line) => line.startsWith("systemctl disable")),
+      false
+    );
     assert.match(result.stderr, /not owned by this script/);
   });
 
@@ -513,7 +620,11 @@ describe("private executor edge", () => {
     stub(sb, "openssl", "exit 1");
     const result = edge(sb, root, applyArgs(root), { TMPDIR: `${root}/tmp` });
     assert.notEqual(result.status, 0);
-    assert.deepEqual(readdirSync(`${sb.root}/tmp`), [], "nothing is left in the temporary directory");
+    assert.deepEqual(
+      readdirSync(`${sb.root}/tmp`),
+      [],
+      "nothing is left in the temporary directory"
+    );
   });
 });
 
@@ -529,42 +640,77 @@ describe("private edge UFW check", () => {
   it("passes when only the dashboard reaches the edge port, beside rules for other ports and outbound rules", () => {
     const result = checkWith(
       "22/tcp ALLOW IN Anywhere\n22/tcp (v6) ALLOW IN Anywhere (v6)\n19000:19442/tcp ALLOW IN Anywhere\n" +
-        `19444/tcp (v6) ALLOW IN Anywhere (v6)\nAnywhere ALLOW OUT Anywhere\n${DASHBOARD}`,
+        `19444/tcp (v6) ALLOW IN Anywhere (v6)\nAnywhere ALLOW OUT Anywhere\n${DASHBOARD}`
     );
-    assert.ok(lines(result).includes("PASS  ufw denies incoming by default and admits 19443/tcp only from 185.252.233.186"));
-    assert.equal(lines(result).some((line) => line.startsWith("FAIL  ufw")), false, result.stdout);
+    assert.ok(
+      lines(result).includes(
+        "PASS  ufw denies incoming by default and admits 19443/tcp only from 185.252.233.186"
+      )
+    );
+    assert.equal(
+      lines(result).some((line) => line.startsWith("FAIL  ufw")),
+      false,
+      result.stdout
+    );
   });
 
   it("refuses a default incoming policy other than deny", () => {
-    const result = checkWith(DASHBOARD, "Status: active\nDefault: allow (incoming), allow (outgoing), disabled (routed)\n");
+    const result = checkWith(
+      DASHBOARD,
+      "Status: active\nDefault: allow (incoming), allow (outgoing), disabled (routed)\n"
+    );
     assert.equal(result.status, 1);
     assert.ok(lines(result).includes("FAIL  ufw's default incoming policy is not deny"));
   });
 
   it("refuses an IPv6 entry for the edge port, a range covering it, and a rule with no protocol", () => {
-    for (const rule of ["19443/tcp (v6) ALLOW IN Anywhere (v6)", "19000:20000/tcp ALLOW IN Anywhere", "19443 ALLOW IN Anywhere"]) {
+    for (const rule of [
+      "19443/tcp (v6) ALLOW IN Anywhere (v6)",
+      "19000:20000/tcp ALLOW IN Anywhere",
+      "19443 ALLOW IN Anywhere",
+    ]) {
       const result = checkWith(`${DASHBOARD}${rule}\n`);
-      assert.ok(lines(result).includes(`FAIL  ufw rule admits 19443/tcp from another source or over IPv6: ${rule}`), rule);
+      assert.ok(
+        lines(result).includes(
+          `FAIL  ufw rule admits 19443/tcp from another source or over IPv6: ${rule}`
+        ),
+        rule
+      );
     }
   });
 
   it("refuses an every-port rule from any source, the dashboard included", () => {
     for (const rule of ["Anywhere ALLOW IN 10.0.0.9", "Anywhere ALLOW IN 185.252.233.186"]) {
       const result = checkWith(`${DASHBOARD}${rule}\n`);
-      assert.ok(lines(result).includes(`FAIL  ufw rule admits every port, not only 19443/tcp: ${rule}`), rule);
+      assert.ok(
+        lines(result).includes(`FAIL  ufw rule admits every port, not only 19443/tcp: ${rule}`),
+        rule
+      );
     }
   });
 
   it("refuses an application profile whose ports the check cannot read, unless the dashboard is its source", () => {
     const result = checkWith(`${DASHBOARD}OpenSSH ALLOW IN Anywhere\n`);
-    assert.ok(lines(result).includes("FAIL  ufw rule's ports are not read (an application profile, an address with a port, or a port list): OpenSSH ALLOW IN Anywhere"));
+    assert.ok(
+      lines(result).includes(
+        "FAIL  ufw rule's ports are not read (an application profile, an address with a port, or a port list): OpenSSH ALLOW IN Anywhere"
+      )
+    );
   });
 
   it("refuses an address-and-port rule and a port list, whose ports the check does not read, from any source but the dashboard", () => {
-    for (const rule of ["172.235.26.148 19443/tcp ALLOW IN Anywhere", "22,19443/tcp ALLOW IN Anywhere"]) {
+    for (const rule of [
+      "172.235.26.148 19443/tcp ALLOW IN Anywhere",
+      "22,19443/tcp ALLOW IN Anywhere",
+    ]) {
       const result = checkWith(`${DASHBOARD}${rule}\n`);
       assert.equal(result.status, 1, rule);
-      assert.ok(lines(result).includes(`FAIL  ufw rule's ports are not read (an application profile, an address with a port, or a port list): ${rule}`), rule);
+      assert.ok(
+        lines(result).includes(
+          `FAIL  ufw rule's ports are not read (an application profile, an address with a port, or a port list): ${rule}`
+        ),
+        rule
+      );
     }
   });
 });
@@ -575,7 +721,10 @@ describe("sandbox network", () => {
     const result = net(sb, ["apply"], { STUB_HOST_IP: "10.0.0.5" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /does not own 172\.235\.26\.148/);
-    assert.equal(stubCalls(sb).some((line) => /^(iptables|docker|sysctl|systemctl) /.test(line)), false);
+    assert.equal(
+      stubCalls(sb).some((line) => /^(iptables|docker|sysctl|systemctl) /.test(line)),
+      false
+    );
   });
 
   it("refuses a subnet that is not an RFC1918 /24, or sits inside Docker's 172.17.0.0/16", () => {
@@ -603,14 +752,24 @@ describe("sandbox network", () => {
       assert.match(line, /^restore-line :POLYTRONX-SBX-(FWD|IN) - \[0:0\]$/, line);
     }
     assert.ok(calls.includes("iptables-restore --noflush"));
-    assert.deepEqual(calls.filter((call) => call.startsWith("iptables -I ")), [
-      `iptables -I DOCKER-USER 1 -s ${SUBNET} -j POLYTRONX-SBX-FWD`,
-      "iptables -I INPUT 1 -i br-oisandbox -j POLYTRONX-SBX-IN",
-    ]);
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith("iptables -I ")),
+      [
+        `iptables -I DOCKER-USER 1 -s ${SUBNET} -j POLYTRONX-SBX-FWD`,
+        "iptables -I INPUT 1 -i br-oisandbox -j POLYTRONX-SBX-IN",
+      ]
+    );
     assert.ok(calls.includes("sysctl -q -w net.ipv6.conf.br-oisandbox.disable_ipv6=1"));
-    assert.equal(calls.some((call) => /docker (restart|rm)|ufw/.test(call)), false);
+    assert.equal(
+      calls.some((call) => /docker (restart|rm)|ufw/.test(call)),
+      false
+    );
     for (const line of calls.filter((call) => call.startsWith("systemctl "))) {
-      assert.match(line, /^systemctl (daemon-reload|(enable|is-enabled) polytronx-sandbox-network\.service)$/, line);
+      assert.match(
+        line,
+        /^systemctl (daemon-reload|(enable|is-enabled) polytronx-sandbox-network\.service)$/,
+        line
+      );
     }
   });
 
@@ -625,9 +784,15 @@ describe("sandbox network", () => {
     assert.match(unit, /^Before=polytronx-executor-edge\.service$/m);
     assert.match(unit, /^Type=oneshot$/m);
     assert.match(unit, /^RemainAfterExit=yes$/m);
-    assert.match(unit, /^ExecStart=\/bin\/bash "[^"]*sandbox-network\.sh" restore --subnet 10\.251\.7\.0\/24$/m);
+    assert.match(
+      unit,
+      /^ExecStart=\/bin\/bash "[^"]*sandbox-network\.sh" restore --subnet 10\.251\.7\.0\/24$/m
+    );
     assert.ok(stubCalls(sb).includes("systemctl enable polytronx-sandbox-network.service"));
-    assert.match(result.stdout, /boot unit polytronx-sandbox-network\.service is owned and enabled/);
+    assert.match(
+      result.stdout,
+      /boot unit polytronx-sandbox-network\.service is owned and enabled/
+    );
   });
 
   it("refuses a boot unit it did not write, before any rule changes", () => {
@@ -637,9 +802,20 @@ describe("sandbox network", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /not owned by this script/);
     const calls = stubCalls(sb);
-    assert.equal(calls.some((call) => call.startsWith("iptables -") && !call.startsWith("iptables -S ")), false);
-    assert.equal(calls.some((call) => call.startsWith("iptables-restore") || call.startsWith("docker network create")), false);
-    assert.equal(readFileSync(`${sb.root}/units/polytronx-sandbox-network.service`, "utf8"), "foreign\n");
+    assert.equal(
+      calls.some((call) => call.startsWith("iptables -") && !call.startsWith("iptables -S ")),
+      false
+    );
+    assert.equal(
+      calls.some(
+        (call) => call.startsWith("iptables-restore") || call.startsWith("docker network create")
+      ),
+      false
+    );
+    assert.equal(
+      readFileSync(`${sb.root}/units/polytronx-sandbox-network.service`, "utf8"),
+      "foreign\n"
+    );
   });
 
   it("applying twice adds no second jump, no second network, and leaves the unit unchanged", () => {
@@ -657,12 +833,20 @@ describe("sandbox network", () => {
   it("refuses an existing network with other options, and does not replace it", () => {
     const sb = netSandbox();
     writeFileSync(`${sb.state}/network`, "");
-    const result = net(sb, ["apply"], { STUB_NETWORK_STATE: `bridge br-oisandbox true false ${SUBNET}` });
+    const result = net(sb, ["apply"], {
+      STUB_NETWORK_STATE: `bridge br-oisandbox true false ${SUBNET}`,
+    });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /other options/);
     const calls = stubCalls(sb);
-    assert.equal(calls.some((call) => call.startsWith("docker network create")), false);
-    assert.equal(calls.some((call) => call.startsWith("iptables -I")), false);
+    assert.equal(
+      calls.some((call) => call.startsWith("docker network create")),
+      false
+    );
+    assert.equal(
+      calls.some((call) => call.startsWith("iptables -I")),
+      false
+    );
   });
 
   it("refuses when DOCKER-USER does not exist, since the forward rules could not be enforced", () => {
@@ -670,7 +854,10 @@ describe("sandbox network", () => {
     const result = net(sb, ["apply"], { STUB_NO_DOCKER_USER: "1" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /DOCKER-USER does not exist/);
-    assert.equal(stubCalls(sb).some((call) => call.startsWith("docker network create")), false);
+    assert.equal(
+      stubCalls(sb).some((call) => call.startsWith("docker network create")),
+      false
+    );
   });
 
   it("the owned forward chain drops metadata, private and loopback before any allowance, and ends in DROP", () => {
@@ -682,10 +869,19 @@ describe("sandbox network", () => {
     assert.equal(rules[0], "-d 169.254.0.0/16 -j DROP");
     assert.equal(rules.at(-1), "-j DROP");
     const firstAccept = rules.findIndex((rule) => rule.endsWith("ACCEPT"));
-    for (const drop of ["-d 10.0.0.0/8 -j DROP", "-d 172.16.0.0/12 -j DROP", "-d 192.168.0.0/16 -j DROP", "-d 127.0.0.0/8 -j DROP"]) {
+    for (const drop of [
+      "-d 10.0.0.0/8 -j DROP",
+      "-d 172.16.0.0/12 -j DROP",
+      "-d 192.168.0.0/16 -j DROP",
+      "-d 127.0.0.0/8 -j DROP",
+    ]) {
       assert.ok(rules.indexOf(drop) < firstAccept, drop);
     }
-    assert.equal(rules.some((rule) => rule.includes("185.252.233.186")), false, "the next rule already accepts every 443");
+    assert.equal(
+      rules.some((rule) => rule.includes("185.252.233.186")),
+      false,
+      "the next rule already accepts every 443"
+    );
   });
 
   it("restore re-applies the rules and sysctl only: it writes no unit and runs no systemctl", () => {
@@ -695,7 +891,10 @@ describe("sandbox network", () => {
     const calls = stubCalls(sb);
     assert.ok(calls.includes("iptables-restore --noflush"));
     assert.ok(calls.includes(`sysctl -q -w net.ipv6.conf.br-oisandbox.disable_ipv6=1`));
-    assert.equal(calls.some((call) => call.startsWith("systemctl")), false);
+    assert.equal(
+      calls.some((call) => call.startsWith("systemctl")),
+      false
+    );
     assert.equal(existsSync(`${sb.root}/units/polytronx-sandbox-network.service`), false);
   });
 
@@ -707,10 +906,20 @@ describe("sandbox network", () => {
     writeFileSync(file, [rules[1], rules[0], ...rules.slice(2)].join("\n") + "\n");
     let result = net(sb, ["check"]);
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/);
-    writeFileSync(file, rules.map((rule) => rule.replace("--dport 53 -j ACCEPT", "--dport 54 -j ACCEPT")).join("\n") + "\n");
+    assert.match(
+      result.stdout,
+      /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/
+    );
+    writeFileSync(
+      file,
+      rules.map((rule) => rule.replace("--dport 53 -j ACCEPT", "--dport 54 -j ACCEPT")).join("\n") +
+        "\n"
+    );
     result = net(sb, ["check"]);
-    assert.match(result.stdout, /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/);
+    assert.match(
+      result.stdout,
+      /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/
+    );
   });
 
   it("writes the owned chains in the form iptables -S prints them, in order", () => {
@@ -728,14 +937,23 @@ describe("sandbox network", () => {
       "-p tcp -m tcp --dport 443 -j ACCEPT",
       "-j DROP",
     ]);
-    assert.deepEqual(chainRules(sb, "POLYTRONX-SBX-IN"), ["-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", "-j DROP"]);
+    assert.deepEqual(chainRules(sb, "POLYTRONX-SBX-IN"), [
+      "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+      "-j DROP",
+    ]);
   });
 
   it("the iptables stub prints a chain as iptables -S does, not as it was written", () => {
     const sb = netSandbox();
-    writeFileSync(`${sb.state}/chain-POLYTRONX-SBX-IN`, "-A POLYTRONX-SBX-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n-A POLYTRONX-SBX-IN -p udp --dport 53 -j ACCEPT\n");
+    writeFileSync(
+      `${sb.state}/chain-POLYTRONX-SBX-IN`,
+      "-A POLYTRONX-SBX-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n-A POLYTRONX-SBX-IN -p udp --dport 53 -j ACCEPT\n"
+    );
     const printed = runSnippet(sb, "iptables -S POLYTRONX-SBX-IN", { STUB_STATE: sb.state });
-    assert.equal(printed.stdout, "-A POLYTRONX-SBX-IN -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A POLYTRONX-SBX-IN -p udp -m udp --dport 53 -j ACCEPT\n");
+    assert.equal(
+      printed.stdout,
+      "-A POLYTRONX-SBX-IN -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A POLYTRONX-SBX-IN -p udp -m udp --dport 53 -j ACCEPT\n"
+    );
   });
 
   it("check fails a chain whose protocol match or conntrack state changed, with the rule count unchanged", () => {
@@ -750,7 +968,11 @@ describe("sandbox network", () => {
       writeFileSync(file, original.replace(from, to));
       const result = net(sb, ["check"]);
       assert.equal(result.status, 1, to);
-      assert.match(result.stdout, /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/, to);
+      assert.match(
+        result.stdout,
+        /FAIL {2}POLYTRONX-SBX-FWD differs from its expected rules, in order/,
+        to
+      );
     }
     writeFileSync(file, original);
     assert.equal(net(sb, ["check"]).status, 0);
@@ -768,9 +990,19 @@ describe("sandbox network", () => {
     assert.ok(calls.includes("iptables -X POLYTRONX-SBX-IN"));
     assert.ok(calls.includes("systemctl disable polytronx-sandbox-network.service"));
     assert.equal(existsSync(`${sb.root}/units/polytronx-sandbox-network.service`), false);
-    assert.ok(readdirSync(`${sb.root}/units`).some((file) => file.startsWith("polytronx-sandbox-network.service.rolled-back.")));
-    assert.equal(calls.some((call) => call.startsWith("docker network rm")), false);
-    assert.equal(calls.some((call) => /^iptables -[FXPZ] / .test(call) && !/POLYTRONX-SBX-/.test(call)), false);
+    assert.ok(
+      readdirSync(`${sb.root}/units`).some((file) =>
+        file.startsWith("polytronx-sandbox-network.service.rolled-back.")
+      )
+    );
+    assert.equal(
+      calls.some((call) => call.startsWith("docker network rm")),
+      false
+    );
+    assert.equal(
+      calls.some((call) => /^iptables -[FXPZ] /.test(call) && !/POLYTRONX-SBX-/.test(call)),
+      false
+    );
   });
 
   it("check reports a network, a jump and the boot unit as blockers on a host that was never applied", () => {
@@ -779,6 +1011,9 @@ describe("sandbox network", () => {
     assert.equal(result.status, 1);
     assert.match(result.stdout, /FAIL {2}network oi-sandbox/);
     assert.match(result.stdout, /FAIL {2}DOCKER-USER has no jump/);
-    assert.match(result.stdout, /FAIL {2}boot unit polytronx-sandbox-network\.service is not owned and enabled/);
+    assert.match(
+      result.stdout,
+      /FAIL {2}boot unit polytronx-sandbox-network\.service is not owned and enabled/
+    );
   });
 });
