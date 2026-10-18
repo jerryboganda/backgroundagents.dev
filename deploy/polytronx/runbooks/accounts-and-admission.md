@@ -66,10 +66,10 @@ Open before the first live run:
 - The manifest redirect is `http://localhost:8765/manifest/callback`. The manifest docs set no
   scheme or host restriction on `redirect_url`, so only the first live submit shows whether GitHub
   accepts it. If it does not, the flow times out and stores nothing.
-- The manifest omits `email_addresses`: GitHub's manifest page rejected it live ("Default permission
-  ... resource is not included in the list"). `verify` reads `GET /app` and requires
-  `email_addresses: read` instead. The live conversion response is checked against the manifest's
-  repository permissions, and a mismatch refuses after the App exists (see above).
+- The manifest omits `email_addresses` (the live name is `emails`): GitHub's manifest page rejected
+  it live ("Default permission ... resource is not included in the list"). `verify` reads `GET /app`
+  and requires `emails: read` instead. The live conversion response is checked against the
+  manifest's repository permissions, and a mismatch refuses after the App exists (see above).
 - `full_name` in the `GET /installation/repositories` items is not shown on
   `docs.github.com/en/rest/apps/installations`, so it is unconfirmed. `verify` refuses if it is
   absent.
@@ -79,8 +79,8 @@ Open before the first live run:
 - Issues write is requested because the control plane posts PR comments through the issues API
   (`packages/control-plane/src/source-control/providers/github-provider.ts:288`). The Issues bullet
   in section 1 lists Issues only for the bot. The owner decides which applies.
-- `email_addresses` is an account permission. The installation object may omit it, so `verify` does
-  not compare it there. The App's copy is checked by `verify` through `GET /app`. The installation's
+- `emails` is an account permission. The installation object may omit it, so `verify` does not
+  compare it there. The App's copy is checked by `verify` through `GET /app`. The installation's
   repository permissions (contents, issues and pull requests write, metadata read) are compared
   exactly.
 - Reloading the manifest page keeps the same form and cookie. The page answers 409 only after GitHub

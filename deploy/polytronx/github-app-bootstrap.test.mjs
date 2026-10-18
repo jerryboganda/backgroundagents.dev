@@ -121,7 +121,7 @@ function githubRoutes({
   repos = [{ full_name: PILOT.repoFullName }],
   totalCount = repos.length,
   link = "",
-  appPermissions = { ...INSTALL_PERMISSIONS, email_addresses: "read" },
+  appPermissions = { ...INSTALL_PERMISSIONS, emails: "read" },
 } = {}) {
   return {
     "GET /app": { json: { id: 4242, permissions: appPermissions } },
@@ -270,10 +270,7 @@ describe("manifest and conversion", () => {
         conversion({ permissions: { ...perms, pull_requests: "read" } }),
         /pull_requests does not match/,
       ],
-      [
-        conversion({ permissions: { ...perms, email_addresses: "read" } }),
-        /email_addresses is not expected/,
-      ],
+      [conversion({ permissions: { ...perms, emails: "read" } }), /emails is not expected/],
       [
         conversion({ permissions: { ...perms, administration: "write" } }),
         /administration is not expected/,
@@ -925,7 +922,7 @@ describe("verify", () => {
     const dir = await tempDir(t);
     const file = await writeEnv(dir, APP_ENV);
     const withAccount = installation({
-      permissions: { ...INSTALL_PERMISSIONS, email_addresses: "read" },
+      permissions: { ...INSTALL_PERMISSIONS, emails: "read" },
     });
     await verifyWith(file, fakeGitHub(githubRoutes({ installations: [withAccount] })).fetchImpl);
     assert.equal(await fs.readFile(file, "latin1"), APP_ENV + "GITHUB_APP_INSTALLATION_ID=999\n");
@@ -936,7 +933,7 @@ describe("verify", () => {
     const file = await writeEnv(dir, APP_ENV);
     for (const appPermissions of [
       INSTALL_PERMISSIONS,
-      { ...INSTALL_PERMISSIONS, email_addresses: "write" },
+      { ...INSTALL_PERMISSIONS, emails: "write" },
     ]) {
       const github = fakeGitHub(githubRoutes({ appPermissions }));
       await assert.rejects(verifyWith(file, github.fetchImpl), /Email addresses is not Read-only/);

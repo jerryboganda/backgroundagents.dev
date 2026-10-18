@@ -89,8 +89,9 @@ const INSTALLATION_PERMISSIONS = Object.freeze({
   pull_requests: "write",
   metadata: "read",
 });
-const ACCOUNT_PERMISSIONS = Object.freeze(["email_addresses"]);
-const EMAIL_PERMISSION = "email_addresses";
+const ACCOUNT_PERMISSIONS = Object.freeze(["emails", "email_addresses"]);
+// GET /app reports the Email addresses permission as "emails" (the REST schema calls it email_addresses).
+const EMAIL_PERMISSION = "emails";
 
 // ownerUid is only enforced on POSIX. Tests inject the test user's uid and a failing rename.
 const DEFAULT_STORE = Object.freeze({ ownerUid: 0, rename: fs.rename });
