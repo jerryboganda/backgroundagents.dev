@@ -44,6 +44,8 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --workspace=@open-inspect/shared --workspace=@open-inspect/web
 COPY packages/shared/ packages/shared/
 COPY packages/web/ packages/web/
+# vitest.config.ts imports this from the root, and next build type-checks it.
+COPY scripts/coverage-policy.ts scripts/coverage-policy.ts
 RUN npm run build -w @open-inspect/shared \
     && npm run build -w @open-inspect/web
 

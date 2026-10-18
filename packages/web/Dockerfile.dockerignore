@@ -6,6 +6,9 @@
 !package-lock.json
 !packages/shared/
 !packages/web/
+# Imported by packages/web/vitest.config.ts. This file only: a !scripts/
+# exception would admit the rest of scripts/.
+!scripts/coverage-policy.ts
 
 # Rebuilt inside the image, never copied in from a developer machine.
 **/node_modules/
