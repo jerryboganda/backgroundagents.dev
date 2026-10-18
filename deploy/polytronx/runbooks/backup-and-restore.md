@@ -18,13 +18,13 @@ every persistent volume and the secrets directory:
 ## Method and downtime
 
 `backup.sh` stops the services that are running (of `app`, `litestream`, `web` and `object-store`),
-archives each volume through a network-less helper (uid 1000 for the app data, root for the object
-store; no capabilities), reads each archive back to prove it decrypts and lists, and starts the same
-services again with `--no-recreate`. Each container comes back with the image and configuration it
-was stopped with, so a backup never changes the release. A failed restart exits non-zero. This
-matches upstream's guidance for a volume snapshot, which requires the application to be stopped.
-Expect about one to two minutes of downtime per backup, and the pre-deploy backup in `deploy.sh` has
-the same cost. The recurring backup is installed as `runbooks/deploy-and-rollback.md` ("Scheduled
+archives each volume through a network-less helper (uid 1000, which owns both volumes; no
+capabilities), reads each archive back to prove it decrypts and lists, and starts the same services
+again with `--no-recreate`. Each container comes back with the image and configuration it was
+stopped with, so a backup never changes the release. A failed restart exits non-zero. This matches
+upstream's guidance for a volume snapshot, which requires the application to be stopped. Expect
+about one to two minutes of downtime per backup, and the pre-deploy backup in `deploy.sh` has the
+same cost. The recurring backup is installed as `runbooks/deploy-and-rollback.md` ("Scheduled
 backup") describes.
 
 Archives are encrypted with `openssl enc -aes-256-cbc -pbkdf2 -iter 300000`. The key file lives in

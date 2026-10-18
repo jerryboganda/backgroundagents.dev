@@ -244,7 +244,7 @@ describe("backup.sh restart and failure propagation", () => {
     );
   });
 
-  it("archives the app volume as uid 1000 with no added capability", () => {
+  it("archives as uid 1000 with no added capability", () => {
     const sb = makeSandbox();
     runScript(sb, "backup.sh", backupArgs(sb, writeKey(sb), writeRelease(sb)), {
       STUB_VOLUME_EXIT: "0",

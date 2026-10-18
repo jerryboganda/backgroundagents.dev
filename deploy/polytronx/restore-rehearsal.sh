@@ -119,7 +119,7 @@ problem="$(third_party_image_problem)"
 rehearsal_compose create >/dev/null
 
 # Volumes are filled through helper containers with no network and only the capabilities named
-# capabilities, streaming the decrypted archive on stdin. No plaintext archive
+# here, streaming the decrypted archive on stdin. No plaintext archive
 # touches the host's disk.
 restore_volume() { # $1 short name, $2 archive file name
   [ -f "$BACKUP/$2" ] || die "backup is missing $2"
