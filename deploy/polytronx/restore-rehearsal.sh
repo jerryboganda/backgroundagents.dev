@@ -118,12 +118,12 @@ problem="$(third_party_image_problem)"
 
 rehearsal_compose create >/dev/null
 
-# Volumes are filled through helper containers with no network and no
+# Volumes are filled through helper containers with no network and only the capabilities named
 # capabilities, streaming the decrypted archive on stdin. No plaintext archive
 # touches the host's disk.
 restore_volume() { # $1 short name, $2 archive file name
   [ -f "$BACKUP/$2" ] || die "backup is missing $2"
-  docker run --rm -i --network none --user 0:0 --cap-drop ALL \
+  docker run --rm -i --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
     --security-opt no-new-privileges --entrypoint tar \
     -v "${PROJECT}_$1:/dst" "$CONTROL_PLANE_IMAGE" -C /dst -xf - < <(decrypt "$BACKUP/$2")
   info "restored volume $1"

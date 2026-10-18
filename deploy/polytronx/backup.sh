@@ -113,15 +113,15 @@ decrypt_from() { # $1 source file; writes plaintext to stdout
 }
 
 # Archives one volume through a helper container with no network. The helper
-# runs as root so it can read the object store's files, and it has no
-# capabilities beyond reading and writing its stdout.
-archive_volume() { # $1 short volume name
+# runs as uid 1000 for the app's data (mode 0700, which root without capabilities cannot open) and as
+# root for the object store's files, and it has no capabilities. $2 is that user:group.
+archive_volume() { # $1 short volume name, $2 user:group
   local volume="${LIVE_PROJECT}_$1"
   if ! docker volume inspect "$volume" >/dev/null 2>&1; then
     info "volume $volume does not exist yet (first deployment); nothing to archive"
     return 0
   fi
-  docker run --rm -i --network none --user 0:0 --cap-drop ALL \
+  docker run --rm -i --network none --user "$2" --cap-drop ALL \
     --security-opt no-new-privileges --entrypoint tar \
     -v "$volume:/src:ro" "$CONTROL_PLANE_IMAGE" -C /src -cf - . |
     encrypt_to "$DEST/$1.tar.enc"
@@ -139,8 +139,8 @@ else
   info "no services are running; none are stopped or restarted"
 fi
 
-archive_volume control-plane-data
-archive_volume object-store-data
+archive_volume control-plane-data 1000:1000
+archive_volume object-store-data 0:0
 
 tar -C "$SECRETS_DIR" -cf - . | encrypt_to "$DEST/secrets.tar.enc"
 decrypt_from "$DEST/secrets.tar.enc" | tar -tf - >/dev/null

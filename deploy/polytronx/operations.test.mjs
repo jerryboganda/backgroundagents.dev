@@ -244,6 +244,17 @@ describe("backup.sh restart and failure propagation", () => {
     );
   });
 
+  it("archives the app volume as uid 1000 with no added capability", () => {
+    const sb = makeSandbox();
+    runScript(sb, "backup.sh", backupArgs(sb, writeKey(sb), writeRelease(sb)), {
+      STUB_VOLUME_EXIT: "0",
+      STUB_RUN_EXIT: "1",
+    });
+    const [run] = stubCalls(sb).filter((line) => line.startsWith("docker run"));
+    assert.match(run, /--user 1000:1000 --cap-drop ALL --security-opt no-new-privileges/);
+    assert.doesNotMatch(run, /--cap-add/);
+  });
+
   it("a failed restart is an error, not a warning, and is not retried", () => {
     const sb = makeSandbox();
     const result = runScript(sb, "backup.sh", backupArgs(sb, writeKey(sb), writeRelease(sb)), {
