@@ -23,11 +23,12 @@ CHECK_ONLY=0
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 alert() { log "ALERT $*"; [ -x "$ROOT/bin/notify" ] && printf '%s\n' "$*" | "$ROOT/bin/notify" || true; }
 
-NODE_IMAGE="$(grep -m1 '^NODE_IMAGE=' "$SRC/deploy/polytronx/pins.env" | cut -d= -f2-)"
-docker image inspect "$NODE_IMAGE" >/dev/null 2>&1 || { log "node image is not on this host; skipping"; exit 0; }
+# Node comes from the running control-plane image, which is always on this host.
+NODE_IMAGE="$(grep -m1 '^CONTROL_PLANE_IMAGE=' "$STATE_DIR/release.env" | cut -d= -f2-)"
+docker image inspect "$NODE_IMAGE" >/dev/null 2>&1 || { log "control-plane image is not on this host; skipping"; exit 0; }
 
 run_node() {
-  docker run --rm -v "$SRC:/src" -v "$STATE_DIR:/state" -w /src "$NODE_IMAGE" node scripts/opencode-model-sync.mjs "$@"
+  docker run --rm --entrypoint node -v "$SRC:/src" -v "$STATE_DIR:/state" -w /src "$NODE_IMAGE" scripts/opencode-model-sync.mjs "$@"
 }
 
 if ! result="$(run_node check --models /src/packages/shared/src/models.ts 2>>"$LOG")"; then
