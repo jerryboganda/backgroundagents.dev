@@ -13,6 +13,8 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     const response = await browserApiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
+    // Already gone (a second request after the first finished): the session is deleted, which is what was asked.
+    if (response.status === 404) return true;
     if (!response.ok) {
       toast.error(await sessionActionErrorMessage(response, "Failed to delete session"));
       return false;

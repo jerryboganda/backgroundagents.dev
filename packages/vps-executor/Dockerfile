@@ -29,6 +29,8 @@ RUN mkdir -p /var/lib/vps-executor && chown node:node /var/lib/vps-executor
 
 # The docker CLI writes its config under HOME by default. Compose mounts /tmp as tmpfs, so point it there.
 ENV DOCKER_CONFIG=/tmp/docker
+# Emptying a large workspace unlinks tens of thousands of files; the default four filesystem threads made that slow.
+ENV UV_THREADPOOL_SIZE=16
 
 USER node
 EXPOSE 8787

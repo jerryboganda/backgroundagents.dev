@@ -173,35 +173,66 @@ async function emptyDirectory(
   handle: FileHandle,
   path: string,
   device: number,
-  isSlotRoot = false
+  isSlotRoot = false,
+  depth = 0
 ): Promise<void> {
   const anchor = anchorOf(handle, path);
   const { mode } = await handle.stat();
   if (POSIX_MODES && (mode & 0o700) !== 0o700) await setModeOf(handle, (mode & 0o777) | 0o700);
-  for (const name of await readdir(anchor)) {
-    const child = join(anchor, name);
-    const entry = await lstat(child);
-    // mkfs.ext4 makes a root-owned 0700 lost+found at the slot root. It is the filesystem's own, holds nothing of the
-    // tenant, and the executor cannot open it, so a reset leaves it alone.
-    if (isSlotRoot && name === "lost+found" && entry.isDirectory() && entry.uid === 0) continue;
-    if (!entry.isDirectory()) {
-      await removeEntry(child);
-      continue;
-    }
-    if (entry.dev !== device) throw unavailable("a directory is a separate mount");
-    await emptyChild(child, entry, device);
-    await rmdir(child);
+  const names = await readdir(anchor);
+  const subdirectories: { child: string; entry: Stats }[] = [];
+  // A project's node_modules holds tens of thousands of small files. One syscall at a time made emptying it take half a
+  // minute, so entries are judged and unlinked in concurrent batches. Subdirectories are walked after the files,
+  // a few at a time near the top and one at a time below, which bounds the descriptors held open at once.
+  for (let from = 0; from < names.length; from += ENTRY_BATCH) {
+    await settleAll(
+      names.slice(from, from + ENTRY_BATCH).map(async (name) => {
+        const child = join(anchor, name);
+        const entry = await lstat(child);
+        // mkfs.ext4 makes a root-owned 0700 lost+found at the slot root. It is the filesystem's own, holds nothing of the
+        // tenant, and the executor cannot open it, so a reset leaves it alone.
+        if (isSlotRoot && name === "lost+found" && entry.isDirectory() && entry.uid === 0) return;
+        if (entry.isDirectory()) subdirectories.push({ child, entry });
+        else await removeEntry(child);
+      })
+    );
   }
+  const width = depth < PARALLEL_DEPTH ? PARALLEL_DIRECTORIES : 1;
+  for (let from = 0; from < subdirectories.length; from += width) {
+    await settleAll(
+      subdirectories.slice(from, from + width).map(async ({ child, entry }) => {
+        if (entry.dev !== device) throw unavailable("a directory is a separate mount");
+        await emptyChild(child, entry, device, depth + 1);
+        await rmdir(child);
+      })
+    );
+  }
+}
+
+const ENTRY_BATCH = 64;
+const PARALLEL_DIRECTORIES = 4;
+const PARALLEL_DEPTH = 3;
+
+/** Runs every task to its end, then throws the first failure, so nothing is still unlinking when a reset reports back. */
+async function settleAll(tasks: Promise<unknown>[]): Promise<void> {
+  const results = await Promise.allSettled(tasks);
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) throw (failed as PromiseRejectedResult).reason;
 }
 
 /**
  * Empties a subdirectory the walk entered. The open proves the entry is still that directory, without following a link,
  * and only then is its mode repaired, through the same descriptor. Exported so a test can replay an entry read before a swap.
  */
-export async function emptyChild(child: string, entry: Stats, device: number): Promise<void> {
+export async function emptyChild(
+  child: string,
+  entry: Stats,
+  device: number,
+  depth = 1
+): Promise<void> {
   const handle = await openVerified(child, entry);
   try {
-    await emptyDirectory(handle, child, device);
+    await emptyDirectory(handle, child, device, false, depth);
   } finally {
     await handle.close();
   }

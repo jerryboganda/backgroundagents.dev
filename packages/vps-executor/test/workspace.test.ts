@@ -112,6 +112,27 @@ describe("workspaceMount and isWorkspaceRoot", () => {
 });
 
 describe("resetSlot", () => {
+  it("empties a large, deep tree of many files completely", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vps-slot-"));
+    try {
+      const slot = join(dir, "slot");
+      for (let d = 0; d < 12; d += 1) {
+        const deep = join(slot, `pkg-${d}`, "node_modules", "inner", "lib", "x", "y");
+        await mkdir(deep, { recursive: true });
+        for (let n = 0; n < 40; n += 1) {
+          await writeFile(join(slot, `pkg-${d}`, `top-${n}.js`), "a");
+          await writeFile(join(deep, `f-${n}.js`), "b");
+        }
+      }
+
+      await resetSlot(slot);
+
+      assert.deepEqual(await readdir(slot), []);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("empties a lost+found the tenant made below the slot root, and the slot root keeps only the filesystem's own", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vps-slot-"));
     try {
