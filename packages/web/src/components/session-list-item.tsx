@@ -229,10 +229,20 @@ export function SessionListItem({
   return (
     <>
       <div
+        aria-busy={isDeleting || isArchiving}
         className={`group relative block px-4 py-2.5 border-l-2 transition ${
           isActive ? "border-l-accent bg-accent-muted" : "border-l-transparent hover:bg-muted"
-        }`}
+        } ${isDeleting || isArchiving ? "pointer-events-none opacity-60" : ""}`}
       >
+        {(isDeleting || isArchiving) && (
+          <div
+            role="status"
+            className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-4 py-1 text-xs text-muted-foreground"
+          >
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            {isDeleting ? "Deleting… cleaning up sandbox and files" : "Archiving…"}
+          </div>
+        )}
         {isRenaming ? (
           <>
             <input
