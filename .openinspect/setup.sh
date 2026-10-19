@@ -103,23 +103,14 @@ setup_python() {
   info "Python environment ready (activate with: source packages/modal-infra/.venv/bin/activate)"
 }
 
-if [ -d "$MODAL_DIR" ]; then
-  # Auto-setup if python3 is available; skip silently otherwise
-  if command -v python3 &>/dev/null; then
-    setup_python
-  else
-    info "python3 not found — skipping optional modal-infra Python setup."
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# 6. Verify the setup
-# ---------------------------------------------------------------------------
-info "Running type check…"
-if npm run typecheck; then
-  info "Type check passed ✓"
-else
-  warn "Type check had issues — you may need to build additional packages."
+# The Modal Python environment and the full type check are for working on modal-infra and for CI. A coding
+# session does not need them, and together they added minutes to every sandbox start. Run them by hand when needed:
+#   (cd packages/modal-infra && uv sync --frozen --extra dev)    and    npm run typecheck
+# Set OI_FULL_SETUP=1 to run both here.
+if [ "${OI_FULL_SETUP:-0}" = "1" ]; then
+  if [ -d "$MODAL_DIR" ] && command -v python3 &>/dev/null; then setup_python; fi
+  info "Running type check…"
+  if npm run typecheck; then info "Type check passed ✓"; else warn "Type check had issues — you may need to build additional packages."; fi
 fi
 
 # ---------------------------------------------------------------------------
