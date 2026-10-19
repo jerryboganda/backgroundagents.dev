@@ -54,6 +54,7 @@ import {
   type CircuitBreakerState,
   type SpawnConfig,
 } from "./decisions";
+import { SANDBOX_RUNTIME_VERSION } from "../runtime-manifest";
 import { evaluateAlarmPolicy, type AlarmPolicyConfig } from "./alarm-policy";
 import { formatBootBudgetFailure } from "./boot-failure-message";
 import { createLogger, type Logger } from "../../logger";
@@ -585,9 +586,13 @@ export class SandboxLifecycleManager
     if (startup.kind === "hold") return;
     if (startup.kind === "restore_snapshot" || startup.kind === "resume_retained") {
       if (this.isSpawningSandbox || this.isTerminatingSandbox) return;
+      const restoredRuntimeVersion =
+        startup.kind === "restore_snapshot" && this.provider.capabilities.restoreBootsCurrentRuntime
+          ? SANDBOX_RUNTIME_VERSION
+          : startup.runtimeVersion;
       if (
         startup.kind === "restore_snapshot" &&
-        (!startup.runtimeVersion || !isSnapshotRuntimeCompatible(startup.runtimeVersion))
+        (!restoredRuntimeVersion || !isSnapshotRuntimeCompatible(restoredRuntimeVersion))
       ) {
         this.shutdown.holdFailedRecovery("The saved sandbox runtime is incompatible");
         return;
@@ -597,7 +602,7 @@ export class SandboxLifecycleManager
         await this.resumeSandbox(startup.providerObjectId, startup.runtimeVersion, true);
       } else if (this.provider.restoreFromSnapshot) {
         this.announceStartup(intent);
-        await this.restoreFromSnapshot(startup.snapshotId, startup.runtimeVersion!);
+        await this.restoreFromSnapshot(startup.snapshotId, restoredRuntimeVersion!);
       } else this.shutdown.holdFailedRecovery("This provider cannot restore the saved snapshot");
       return;
     }
@@ -620,7 +625,8 @@ export class SandboxLifecycleManager
       this.config.spawn,
       now,
       this.isSpawningSandbox || this.isTerminatingSandbox,
-      !!this.provider.capabilities.supportsPersistentResume
+      !!this.provider.capabilities.supportsPersistentResume,
+      !!this.provider.capabilities.restoreBootsCurrentRuntime
     );
 
     switch (spawnDecision.action) {

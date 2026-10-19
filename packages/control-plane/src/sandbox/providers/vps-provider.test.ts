@@ -102,6 +102,7 @@ describe("VpsSandboxProvider", () => {
       supportsPersistentResume: false,
       supportsExplicitStop: true,
       snapshotRequiresShutdown: true,
+      restoreBootsCurrentRuntime: true,
     });
   });
 

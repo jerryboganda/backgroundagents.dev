@@ -64,6 +64,12 @@ export interface SandboxProviderCapabilities {
   supportsExplicitStop?: boolean;
   /** An ordinary checkpoint must enter the terminal shutdown flow first. */
   snapshotRequiresShutdown?: boolean;
+  /**
+   * A restore boots the current sandbox image onto the saved workspace, so the saved state holds no runtime of its own
+   * and its recorded runtime version says nothing about what will run. The runtime compatibility floor applies to
+   * restored filesystems, not to this.
+   */
+  restoreBootsCurrentRuntime?: boolean;
 }
 
 export type SandboxLifetime =

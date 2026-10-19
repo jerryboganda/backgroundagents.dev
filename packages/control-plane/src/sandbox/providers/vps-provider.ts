@@ -171,6 +171,8 @@ export class VpsSandboxProvider implements SandboxProvider {
     supportsExplicitStop: true,
     // Saving ends the sandbox, so a turn never saves: inactivity, lifetime expiry and failures do.
     snapshotRequiresShutdown: true,
+    // A restore starts the current runtime image on the reattached workspace; no runtime is saved.
+    restoreBootsCurrentRuntime: true,
   };
 
   constructor(

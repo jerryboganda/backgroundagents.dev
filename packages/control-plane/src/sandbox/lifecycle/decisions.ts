@@ -14,6 +14,7 @@ import {
   MIN_COMPATIBLE_RUNTIME_VERSION,
   parseRuntimeVersionNumber,
 } from "../../image-builds/model";
+import { SANDBOX_RUNTIME_VERSION } from "../runtime-manifest";
 
 // ==================== Dead-Sandbox Policy ====================
 
@@ -334,7 +335,8 @@ export function evaluateSpawnDecision(
   config: SpawnConfig,
   now: number,
   isSpawningInMemory: boolean,
-  supportsPersistentResume = false
+  supportsPersistentResume = false,
+  restoreBootsCurrentRuntime = false
 ): SpawnAction {
   const timeSinceLastSpawn = now - state.createdAt;
 
@@ -360,12 +362,16 @@ export function evaluateSpawnDecision(
     state.snapshotImageId &&
     (state.status === "stopped" || state.status === "stale" || state.status === "failed")
   ) {
-    if (isSnapshotRuntimeCompatible(state.snapshotRuntimeVersion)) {
+    // A restore that boots the current image carries no runtime of its own, so the current version is what runs.
+    const restoredRuntimeVersion = restoreBootsCurrentRuntime
+      ? SANDBOX_RUNTIME_VERSION
+      : state.snapshotRuntimeVersion;
+    if (isSnapshotRuntimeCompatible(restoredRuntimeVersion)) {
       return {
         action: "restore",
         snapshotImageId: state.snapshotImageId,
         // Non-null: the compatibility check above rejects a missing version.
-        snapshotRuntimeVersion: state.snapshotRuntimeVersion as string,
+        snapshotRuntimeVersion: restoredRuntimeVersion as string,
       };
     }
     // Never substitute a clean filesystem for retained user state.
