@@ -84,7 +84,11 @@ import type {
 import { shutdownPolicyForLaunch, type ShutdownLifecyclePolicy } from "./shutdown-policy";
 import type { SandboxAccess } from "./sandbox-access";
 import { SandboxLaunchExpiredError, SpawnSupersededError } from "./startup-errors";
-import { admissionIdentity, type SandboxAdmissionGate } from "../admission/gate";
+import {
+  admissionIdentity,
+  SandboxCapacityExhaustedError,
+  type SandboxAdmissionGate,
+} from "../admission/gate";
 import type { SandboxAdmissionIdentity } from "../admission/reservations";
 import { parseVpsPendingVmReference } from "../providers/pending-vm-reference";
 import {
@@ -402,6 +406,11 @@ export type SandboxStartupIntent = "spawn" | "warm";
 
 export interface SandboxLifecycle {
   spawnSandbox(intent?: SandboxStartupIntent): Promise<void>;
+  /**
+   * True once, after a launch was refused because every sandbox admission slot is held. Nothing was started, so the
+   * caller may try again when a slot frees. Reading it clears it.
+   */
+  consumeCapacityRefusal(): boolean;
   updateLastActivity(timestamp: number): void;
   onPromptDispatched(): void;
   terminateUnresponsiveSandbox(trigger: UnresponsiveSandboxTrigger): Promise<void>;
@@ -449,6 +458,7 @@ export class SandboxLifecycleManager
    * The persisted sandbox status ("spawning", "connecting") handles cross-request protection.
    */
   private isSpawningSandbox = false;
+  private capacityRefused = false;
   private isTerminatingSandbox = false;
   private providerStartupPending = false;
   /**
@@ -564,6 +574,12 @@ export class SandboxLifecycleManager
    * Only a launch is announced to clients, as `intent`, and only a launch is
    * subject to the circuit breaker.
    */
+  consumeCapacityRefusal(): boolean {
+    const refused = this.capacityRefused;
+    this.capacityRefused = false;
+    return refused;
+  }
+
   async spawnSandbox(intent: SandboxStartupIntent = "spawn"): Promise<void> {
     const startup = this.shutdown.startupDecision();
     if (startup.kind === "hold") return;
@@ -988,6 +1004,7 @@ export class SandboxLifecycleManager
         return;
       }
       await this.handleRejectedStartupAllocation(error, generation);
+      if (error instanceof SandboxCapacityExhaustedError) this.capacityRefused = true;
       const errorMessage = error instanceof Error ? error.message : "Failed to spawn sandbox";
       this.log.error("Sandbox spawn completed", {
         event: "sandbox.spawn",

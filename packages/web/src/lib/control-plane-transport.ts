@@ -14,6 +14,22 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("control-plane-transport");
 const CONTROL_PLANE_FETCH_TIMEOUT_MS = 15_000;
+/**
+ * Deleting a session stops its sandbox and empties its workspace, which takes tens of seconds for a project with
+ * a large node_modules. Only that one request gets the longer bound, so a slow delete is not reported as failed.
+ */
+const SESSION_DELETE_TIMEOUT_MS = 300_000;
+
+export function controlPlaneTimeoutMs(url: string, method: string | undefined): number {
+  if (method?.toUpperCase() !== "DELETE") return CONTROL_PLANE_FETCH_TIMEOUT_MS;
+  try {
+    return /^\/sessions\/[^/]+$/.test(new URL(url).pathname)
+      ? SESSION_DELETE_TIMEOUT_MS
+      : CONTROL_PLANE_FETCH_TIMEOUT_MS;
+  } catch {
+    return CONTROL_PLANE_FETCH_TIMEOUT_MS;
+  }
+}
 
 /**
  * Get the control plane base URL (no trailing slash) from environment.
@@ -88,14 +104,15 @@ export async function dispatchControlPlaneFetch(
   correlationFields: Record<string, string>,
   streamResponse = false
 ): Promise<Response> {
+  const timeoutMs = controlPlaneTimeoutMs(url, fetchOptions.method);
   const timeoutController = streamResponse ? new AbortController() : null;
   const timeoutSignal = timeoutController
     ? timeoutController.signal
-    : AbortSignal.timeout(CONTROL_PLANE_FETCH_TIMEOUT_MS);
+    : AbortSignal.timeout(timeoutMs);
   const timeoutId = timeoutController
     ? setTimeout(
         () => timeoutController.abort(new DOMException("Timed out", "TimeoutError")),
-        CONTROL_PLANE_FETCH_TIMEOUT_MS
+        timeoutMs
       )
     : null;
   const signal = fetchOptions.signal

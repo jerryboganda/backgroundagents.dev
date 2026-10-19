@@ -152,6 +152,10 @@ function resolveParticipantGitIdentity(
     : { mode: "agent-only" };
 }
 
+/** How often a prompt refused for want of a sandbox slot asks again, and how long it keeps asking. */
+const CAPACITY_RETRY_INTERVAL_MS = 15_000;
+const CAPACITY_WAIT_MAX_MS = 45 * 60_000;
+
 export class SessionMessageQueue {
   constructor(
     private readonly backgroundTasks: BackgroundTasks,
@@ -508,16 +512,19 @@ export class SessionMessageQueue {
       // pending and dispatches when the sandbox WebSocket connects.
       this.backgroundTasks.submit(
         () =>
-          this.sandboxLifecycle.spawnSandbox().catch((error) => {
-            // Expected provider failures report themselves inside the lifecycle
-            // manager; this catch only sees throws from before those handlers.
-            // Route it through the same call so the reason is persisted as well
-            // as broadcast — otherwise it survives only until the tab reloads.
-            this.sandboxLifecycle.reportSandboxError(
-              error instanceof Error ? error.message : "Failed to spawn sandbox"
-            );
-            throw error;
-          }),
+          this.sandboxLifecycle.spawnSandbox().then(
+            () => this.retryWhileCapacityFull(message.id),
+            (error) => {
+              // Expected provider failures report themselves inside the lifecycle
+              // manager; this catch only sees throws from before those handlers.
+              // Route it through the same call so the reason is persisted as well
+              // as broadcast — otherwise it survives only until the tab reloads.
+              this.sandboxLifecycle.reportSandboxError(
+                error instanceof Error ? error.message : "Failed to spawn sandbox"
+              );
+              throw error;
+            }
+          ),
         {
           name: "sandbox.spawn",
           context: { message_id: message.id },
@@ -969,6 +976,32 @@ export class SessionMessageQueue {
    * work. Read in the caller's continuation, so the decision it feeds is made
    * on the same state.
    */
+  /**
+   * A launch refused because every sandbox slot is held started nothing, and the prompt stays pending with no event
+   * that would ever dispatch it. Try again while the prompt is still wanted, until a slot frees or the wait runs out.
+   * Slots free when another session's sandbox stops, so the wait is bounded rather than the prompt failed at once.
+   */
+  private async retryWhileCapacityFull(messageId: string): Promise<void> {
+    const deadline = Date.now() + CAPACITY_WAIT_MAX_MS;
+    while (this.sandboxLifecycle.consumeCapacityRefusal()) {
+      if (Date.now() >= deadline) {
+        this.sandboxLifecycle.reportSandboxError(
+          "No sandbox slot freed up in time. Stop or delete another session, then send the prompt again."
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, CAPACITY_RETRY_INTERVAL_MS));
+      if (!this.isPromptStillDispatchable(messageId)) return;
+      this.log.info("prompt.dispatch", {
+        event: "prompt.dispatch",
+        message_id: messageId,
+        outcome: "deferred",
+        reason: "waiting_for_sandbox_slot",
+      });
+      await this.sandboxLifecycle.spawnSandbox();
+    }
+  }
+
   private isPromptStillDispatchable(messageId: string): boolean {
     const session = this.repository.getSession();
     return (

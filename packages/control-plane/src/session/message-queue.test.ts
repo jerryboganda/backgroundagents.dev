@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestBackgroundTasks } from "../background-tasks.test-support";
 import { fingerprintWebPrompt, SessionMessageQueue } from "./message-queue";
 import { AttachmentClaimConflictError } from "./session-attachment-repository";
@@ -233,6 +233,7 @@ function buildQueue(
   };
   const sandboxLifecycle = {
     spawnSandbox: vi.fn(async () => {}),
+    consumeCapacityRefusal: vi.fn(() => false),
     updateLastActivity: vi.fn((_timestamp: number) => {}),
     onPromptDispatched: vi.fn(() => {}),
     terminateUnresponsiveSandbox: vi.fn(async () => {}),
@@ -968,6 +969,67 @@ describe("SessionMessageQueue", () => {
     );
     // The spawn failure is absorbed by the boundary, not thrown at the caller.
     expect(h.backgroundTasks.failures).toEqual([expect.any(Error)]);
+  });
+
+  describe("when every sandbox slot is held", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("asks again until a slot frees, and stops once the launch is no longer refused", async () => {
+      const h = buildQueue();
+      h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-wait" }));
+      h.repository.getMessageStatus.mockReturnValue("pending");
+      h.sandboxLifecycle.consumeCapacityRefusal
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(true)
+        .mockReturnValue(false);
+
+      await h.queue.processMessageQueue();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(h.sandboxLifecycle.spawnSandbox).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await h.backgroundTasks.settle();
+
+      expect(h.sandboxLifecycle.spawnSandbox).toHaveBeenCalledTimes(3);
+      expect(h.sandboxLifecycle.reportSandboxError).not.toHaveBeenCalled();
+      expect(h.log.info).toHaveBeenCalledWith(
+        "prompt.dispatch",
+        expect.objectContaining({ message_id: "msg-wait", reason: "waiting_for_sandbox_slot" })
+      );
+    });
+
+    it("stops asking when the prompt was cancelled while it waited", async () => {
+      const h = buildQueue();
+      h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-gone" }));
+      // Pending when the prompt is first dispatched, cancelled by the time it asks again.
+      h.repository.getMessageStatus.mockReturnValueOnce("pending").mockReturnValue(null);
+      h.sandboxLifecycle.consumeCapacityRefusal.mockReturnValueOnce(true).mockReturnValue(false);
+
+      await h.queue.processMessageQueue();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await h.backgroundTasks.settle();
+
+      expect(h.sandboxLifecycle.spawnSandbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("tells the user to free a slot when none frees within the wait", async () => {
+      const h = buildQueue();
+      h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-late" }));
+      h.repository.getMessageStatus.mockReturnValue("pending");
+      h.sandboxLifecycle.consumeCapacityRefusal.mockReturnValue(true);
+
+      await h.queue.processMessageQueue();
+      await vi.advanceTimersByTimeAsync(46 * 60_000);
+      await h.backgroundTasks.settle();
+
+      expect(h.sandboxLifecycle.reportSandboxError).toHaveBeenCalledWith(
+        expect.stringContaining("No sandbox slot freed up in time")
+      );
+    });
   });
 
   it("rejects a prompt whose session closed while its fingerprint was being hashed", async () => {
