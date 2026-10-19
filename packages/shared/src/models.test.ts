@@ -71,6 +71,7 @@ const ZEN_MODELS = [
   "opencode/longcat-2.5-preview-free",
   "opencode/jev-1.13-free",
   "opencode/space-bunny-free",
+  "opencode/minimax-m3.1-flash-free",
 ] as const;
 
 const GO_MODELS = [
@@ -107,6 +108,7 @@ const GO_MODELS = [
   "opencode-go/longcat-2.5-preview-free",
   "opencode-go/beam-free",
   "opencode-go/space-bunny",
+  "opencode-go/minimax-m3.1-flash-free",
   "opencode-go/omen-alpha",
   "opencode-go/step-5-preview",
   "opencode-go/claude-haiku-5-5",

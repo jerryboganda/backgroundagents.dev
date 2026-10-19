@@ -276,6 +276,7 @@ export const MODEL_CATALOG = [
       { id: "opencode/longcat-2.5-preview-free", name: "LongCat 2.5 Preview (free)", description: "Meituan, free tier" },
       { id: "opencode/jev-1.13-free", name: "Jev 1.13 (free)", description: "OpenCode free tier" },
       { id: "opencode/space-bunny-free", name: "Space Bunny (free)", description: "OpenCode free tier" },
+      { id: "opencode/minimax-m3.1-flash-free", name: "MiniMax M3.1 Flash (free)", description: "MiniMax, free tier" },
     ],
   },
   {
@@ -337,6 +338,7 @@ export const MODEL_CATALOG = [
       { id: "opencode-go/longcat-2.5-preview-free", name: "LongCat 2.5 Preview (free)", description: "Meituan, free tier" },
       { id: "opencode-go/beam-free", name: "Beam (free)", description: "OpenCode free tier" },
       { id: "opencode-go/space-bunny", name: "Space Bunny", description: "OpenCode" },
+      { id: "opencode-go/minimax-m3.1-flash-free", name: "MiniMax M3.1 Flash (free)", description: "MiniMax, free tier" },
       { id: "opencode-go/omen-alpha", name: "Omen Alpha", description: "OpenCode" },
       { id: "opencode-go/step-5-preview", name: "Step 5 Preview", description: "StepFun" },
       { id: "opencode-go/claude-haiku-5-5", name: "Claude Haiku 5.5", description: "Anthropic" },

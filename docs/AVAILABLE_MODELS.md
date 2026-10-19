@@ -102,6 +102,7 @@ pay-per-token against `https://opencode.ai/zen/v1`.
 | `opencode/longcat-2.5-preview-free` | LongCat 2.5 Preview (free) | Meituan, free tier | Not supported | N/A |
 | `opencode/jev-1.13-free` | Jev 1.13 (free) | OpenCode free tier | Not supported | N/A |
 | `opencode/space-bunny-free` | Space Bunny (free) | OpenCode free tier | Not supported | N/A |
+| `opencode/minimax-m3.1-flash-free` | MiniMax M3.1 Flash (free) | MiniMax, free tier | Not supported | N/A |
 
 ## OpenCode Go
 
@@ -158,6 +159,7 @@ that fails. That model is reachable as `opencode/minimax-m2.5` on Zen.
 | `opencode-go/longcat-2.5-preview-free` | LongCat 2.5 Preview (free) | Meituan, free tier | Not supported | N/A |
 | `opencode-go/beam-free` | Beam (free) | OpenCode free tier | Not supported | N/A |
 | `opencode-go/space-bunny` | Space Bunny | OpenCode | Not supported | N/A |
+| `opencode-go/minimax-m3.1-flash-free` | MiniMax M3.1 Flash (free) | MiniMax, free tier | Not supported | N/A |
 | `opencode-go/omen-alpha` | Omen Alpha | OpenCode | Not supported | N/A |
 | `opencode-go/step-5-preview` | Step 5 Preview | StepFun | Not supported | N/A |
 | `opencode-go/claude-haiku-5-5` | Claude Haiku 5.5 | Anthropic | Not supported | N/A |
