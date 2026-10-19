@@ -61,6 +61,16 @@ const ZEN_MODELS = [
   "opencode/glm-5",
   "opencode/glm-5.1",
   "opencode/glm-5.2",
+  "opencode/big-pickle",
+  "opencode/beam-free",
+  "opencode/glm-5.3-flash-free",
+  "opencode/deepseek-v4.1-flash-free",
+  "opencode/mimo-v2.6-flash-free",
+  "opencode/nemotron-3.5-super-vl-free",
+  "opencode/nemotron-3.5-lightning-free",
+  "opencode/longcat-2.5-preview-free",
+  "opencode/jev-1.13-free",
+  "opencode/space-bunny-free",
 ] as const;
 
 const GO_MODELS = [
@@ -91,6 +101,16 @@ const GO_MODELS = [
   "opencode-go/qwen3.6-plus",
   "opencode-go/hy4-preview",
   "opencode-go/hy3",
+  "opencode-go/grok-4.7",
+  "opencode-go/mimo-v2.6-flash",
+  "opencode-go/mimo-v2.6-pro",
+  "opencode-go/longcat-2.5-preview-free",
+  "opencode-go/beam-free",
+  "opencode-go/space-bunny",
+  "opencode-go/omen-alpha",
+  "opencode-go/step-5-preview",
+  "opencode-go/claude-haiku-5-5",
+  "opencode-go/gemini-4-argon-contributor",
 ] as const;
 
 const DEEPSEEK_MODELS = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"] as const;

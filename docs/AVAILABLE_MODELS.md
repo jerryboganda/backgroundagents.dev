@@ -92,6 +92,16 @@ pay-per-token against `https://opencode.ai/zen/v1`.
 | `opencode/glm-5`        | GLM 5        | Z.ai 744B MoE | Not supported     | N/A            |
 | `opencode/glm-5.1`      | GLM 5.1      | Z.ai          | Not supported     | N/A            |
 | `opencode/glm-5.2`      | GLM 5.2      | Z.ai          | Not supported     | N/A            |
+| `opencode/big-pickle` | Big Pickle (free) | OpenCode free tier | Not supported | N/A |
+| `opencode/beam-free` | Beam (free) | OpenCode free tier | Not supported | N/A |
+| `opencode/glm-5.3-flash-free` | GLM 5.3 Flash (free) | Z.ai, free tier | Not supported | N/A |
+| `opencode/deepseek-v4.1-flash-free` | DeepSeek V4.1 Flash (free) | DeepSeek, free tier | Not supported | N/A |
+| `opencode/mimo-v2.6-flash-free` | MiMo V2.6 Flash (free) | Xiaomi, free tier | Not supported | N/A |
+| `opencode/nemotron-3.5-super-vl-free` | Nemotron 3.5 Super VL (free) | NVIDIA, free tier | Not supported | N/A |
+| `opencode/nemotron-3.5-lightning-free` | Nemotron 3.5 Lightning (free) | NVIDIA, free tier | Not supported | N/A |
+| `opencode/longcat-2.5-preview-free` | LongCat 2.5 Preview (free) | Meituan, free tier | Not supported | N/A |
+| `opencode/jev-1.13-free` | Jev 1.13 (free) | OpenCode free tier | Not supported | N/A |
+| `opencode/space-bunny-free` | Space Bunny (free) | OpenCode free tier | Not supported | N/A |
 
 ## OpenCode Go
 
@@ -142,6 +152,16 @@ that fails. That model is reachable as `opencode/minimax-m2.5` on Zen.
 | `opencode-go/qwen3.6-plus`                 | Qwen3.6 Plus                 | Alibaba Cloud                 | Not supported     | N/A            |
 | `opencode-go/hy4-preview`                  | Hy4 Preview                  | Tencent Hunyuan               | Not supported     | N/A            |
 | `opencode-go/hy3`                          | Hy3                          | Tencent Hunyuan               | Not supported     | N/A            |
+| `opencode-go/grok-4.7` | Grok 4.7 | xAI | Not supported | N/A |
+| `opencode-go/mimo-v2.6-flash` | MiMo V2.6 Flash | Xiaomi | Not supported | N/A |
+| `opencode-go/mimo-v2.6-pro` | MiMo V2.6 Pro | Xiaomi | Not supported | N/A |
+| `opencode-go/longcat-2.5-preview-free` | LongCat 2.5 Preview (free) | Meituan, free tier | Not supported | N/A |
+| `opencode-go/beam-free` | Beam (free) | OpenCode free tier | Not supported | N/A |
+| `opencode-go/space-bunny` | Space Bunny | OpenCode | Not supported | N/A |
+| `opencode-go/omen-alpha` | Omen Alpha | OpenCode | Not supported | N/A |
+| `opencode-go/step-5-preview` | Step 5 Preview | StepFun | Not supported | N/A |
+| `opencode-go/claude-haiku-5-5` | Claude Haiku 5.5 | Anthropic | Not supported | N/A |
+| `opencode-go/gemini-4-argon-contributor` | Gemini 4 Argon Contributor | Google, contributor tier | Not supported | N/A |
 
 Some of these models are reachable through more than one provider, billed against different
 credentials. `opencode-go/grok-4.6` and `xai/grok-4.6` are the same Grok model behind different
