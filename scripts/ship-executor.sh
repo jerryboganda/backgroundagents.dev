@@ -11,7 +11,7 @@ tar -C "$ROOT/deploy" -cf - polytronx |
   ssh "$HOST" 'cd /opt/polytronx/executor && cp -a deploy/polytronx "deploy/polytronx.bak-$(date +%Y%m%dT%H%M%S)" && tar -C deploy -xf - && chmod +x deploy/polytronx/*.sh'
 ssh "$HOST" 'set -e; cd /opt/polytronx/executor
 TS=$(date +%Y%m%dT%H%M%S); IMG=open-inspect-vps-executor:ship-$TS
-docker build -q -t "$IMG" --label io.polytronx.node-image="$(grep -m1 "^ARG NODE_IMAGE=" build/vps-executor.new/Dockerfile | cut -d= -f2-)" build/vps-executor.new >/dev/null
+docker build -q -t "$IMG" --label io.polytronx.node-image="$(grep -m1 "^ARG NODE_IMAGE=" build/vps-executor.new/Dockerfile | cut -d= -f2- | tr -d "\r")" build/vps-executor.new >/dev/null
 ID=$(docker image inspect "$IMG" --format "{{.Id}}")
 bash deploy/polytronx/workspace-slots.sh --check >/dev/null 2>&1 || bash deploy/polytronx/workspace-slots.sh --apply
 cp executor-release.env "executor-release.env.bak-$TS"

@@ -159,7 +159,7 @@ export async function resetSlot(hostPath: string): Promise<void> {
   const root = await lstat(hostPath);
   const handle = await openVerified(hostPath, root);
   try {
-    await emptyDirectory(handle, hostPath, root.dev);
+    await emptyDirectory(handle, hostPath, root.dev, true);
   } finally {
     await handle.close();
   }
@@ -169,13 +169,21 @@ export async function resetSlot(hostPath: string): Promise<void> {
  * Empties an open directory. Its entries are named through `anchorOf`, so a path swapped for a link cannot redirect
  * the walk. Each entry is judged by lstat: a directory is emptied and removed, and anything else is unlinked.
  */
-async function emptyDirectory(handle: FileHandle, path: string, device: number): Promise<void> {
+async function emptyDirectory(
+  handle: FileHandle,
+  path: string,
+  device: number,
+  isSlotRoot = false
+): Promise<void> {
   const anchor = anchorOf(handle, path);
   const { mode } = await handle.stat();
   if (POSIX_MODES && (mode & 0o700) !== 0o700) await setModeOf(handle, (mode & 0o777) | 0o700);
   for (const name of await readdir(anchor)) {
     const child = join(anchor, name);
     const entry = await lstat(child);
+    // mkfs.ext4 makes a root-owned 0700 lost+found at the slot root. It is the filesystem's own, holds nothing of the
+    // tenant, and the executor cannot open it, so a reset leaves it alone.
+    if (isSlotRoot && name === "lost+found" && entry.isDirectory() && entry.uid === 0) continue;
     if (!entry.isDirectory()) {
       await removeEntry(child);
       continue;

@@ -112,6 +112,21 @@ describe("workspaceMount and isWorkspaceRoot", () => {
 });
 
 describe("resetSlot", () => {
+  it("empties a lost+found the tenant made below the slot root, and the slot root keeps only the filesystem's own", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vps-slot-"));
+    try {
+      const slot = join(dir, "slot");
+      await mkdir(join(slot, "project", "lost+found"), { recursive: true });
+      await writeFile(join(slot, "project", "lost+found", "data.txt"), "data");
+
+      await resetSlot(slot);
+
+      assert.deepEqual(await readdir(slot), []);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("empties the slot and never follows a link out of it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vps-slot-"));
     try {
