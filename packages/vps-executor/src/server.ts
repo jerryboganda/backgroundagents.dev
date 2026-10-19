@@ -68,6 +68,11 @@ export interface ExecutorServerOptions {
   resetWorkspace?: (hostPath: string) => Promise<void>;
   /** Leases whose create this process is running. Shared with the reconciliation pass, which leaves them alone. */
   inFlight?: Set<string>;
+  /**
+   * When set, a create refused for want of a workspace slot starts a reclaim at once, so the control plane's retry
+   * finds one. The background pass runs the same reclaim on a timer.
+   */
+  slotReclaim?: SlotReclaimPolicy;
   now?: () => number;
 }
 
@@ -79,6 +84,14 @@ interface Failure {
 
 /** The outcome of emptying a slot this process holds. */
 type SlotClear = "cleared" | "active" | "unavailable" | "failed";
+
+/** When the janitor frees workspaces nobody is using, so a host never sits full of sessions that did not come back. */
+export interface SlotReclaimPolicy {
+  /** Keep at least this many slots free by releasing the oldest idle retained workspaces. */
+  minFreeSlots: number;
+  /** A retained workspace is released early only when its retaining sandbox was created at least this long ago. */
+  minAgeMs: number;
+}
 
 export interface WorkspaceSweepResult {
   /** Retained workspaces emptied and freed. */
@@ -95,6 +108,12 @@ export type ExecutorServer = Server & {
    * release route, with the identity the state holds for it, so nothing frees a workspace a running sandbox uses.
    */
   releaseExpiredWorkspaces(maxAgeMs: number): Promise<WorkspaceSweepResult>;
+  /**
+   * Frees what no one can use: workspaces no session owns, and resets that stopped half done. Then, while fewer than
+   * `policy.minFreeSlots` slots are free, releases the oldest idle retained workspace past `policy.minAgeMs`. A
+   * workspace a running container names is never touched.
+   */
+  reclaimSlots(policy: SlotReclaimPolicy): Promise<WorkspaceSweepResult>;
 };
 
 /**
@@ -275,6 +294,11 @@ export function createExecutorServer(options: ExecutorServerOptions): ExecutorSe
       case "full":
         return sendJson(res, 503, { error: "capacity_exhausted" });
       case "workspace_full":
+        // Reclaim in the background so the control plane's retry of this create finds a free slot.
+        if (options.slotReclaim)
+          reclaimSlots(options.slotReclaim).catch((error: unknown) =>
+            reportError("slot reclaim failed", error)
+          );
         return sendJson(res, 503, { error: "workspace_capacity_exhausted" });
     }
   }
@@ -915,32 +939,75 @@ export function createExecutorServer(options: ExecutorServerOptions): ExecutorSe
     return settlementAnswer(found, scope);
   }
 
+  /**
+   * Releases one retained workspace through the same fenced start as the release route. `owner` is the identity of a
+   * session-owned workspace; without it the workspace has no owner and the operator release starts it.
+   */
+  async function releaseWorkspace(
+    held: { workspaceSlot: number; sandboxId: string },
+    owner: { sessionId: string; leaseToken: string } | undefined,
+    result: WorkspaceSweepResult,
+    why: string
+  ): Promise<boolean> {
+    const { workspaceSlot, sandboxId } = held;
+    // One clear of a slot runs at a time in this process, and a release route call may be clearing this one.
+    if (clearing.has(workspaceSlot)) return false;
+    clearing.add(workspaceSlot);
+    try {
+      // A container that still names the slot means the session came back, so the workspace is not stale.
+      if (await namedByOwned(sandboxId, workspaceSlot)) return false;
+      // The owner's own identity fences the release, as in the route. Anything but a start is not ours to clear.
+      const start =
+        owner === undefined
+          ? store.beginOperatorRelease(sandboxId)
+          : store.beginRelease(sandboxId, owner.sessionId, owner.leaseToken);
+      if (start.kind !== "started") return false;
+      const outcome = await emptyHeldSlot(sandboxId, workspaceSlot);
+      if (outcome === "cleared" && store.finishRelease(workspaceSlot)) {
+        result.released += 1;
+        console.log(
+          `vps-executor: released the workspace of sandbox ${sandboxId} from slot ${workspaceSlot}; ${why}`
+        );
+        return true;
+      }
+      if (outcome !== "active") result.failed += 1;
+      return false;
+    } catch (error) {
+      result.failed += 1;
+      reportError("could not release a workspace", error);
+      return false;
+    } finally {
+      clearing.delete(workspaceSlot);
+    }
+  }
+
   async function releaseExpiredWorkspaces(maxAgeMs: number): Promise<WorkspaceSweepResult> {
     const result: WorkspaceSweepResult = { released: 0, failed: 0 };
-    for (const held of store.expiredRetained(now() - maxAgeMs)) {
-      const { workspaceSlot, sandboxId, sessionId, leaseToken } = held;
-      // One clear of a slot runs at a time in this process, and a release route call may be clearing this one.
-      if (clearing.has(workspaceSlot)) continue;
-      clearing.add(workspaceSlot);
-      try {
-        // A container that still names the slot means the session came back, so the workspace is not stale.
-        if (await namedByOwned(sandboxId, workspaceSlot)) continue;
-        // The owner's own identity fences the release, as in the route. Anything but a start is not ours to clear.
-        const start = store.beginRelease(sandboxId, sessionId, leaseToken);
-        if (start.kind !== "started") continue;
-        const outcome = await emptyHeldSlot(sandboxId, workspaceSlot);
-        if (outcome === "cleared" && store.finishRelease(workspaceSlot)) {
-          result.released += 1;
-          console.log(
-            `vps-executor: released the workspace of sandbox ${sandboxId} from slot ${workspaceSlot}; its session did not return`
-          );
-        } else if (outcome !== "active") result.failed += 1;
-      } catch (error) {
-        result.failed += 1;
-        reportError("could not release a stale workspace", error);
-      } finally {
-        clearing.delete(workspaceSlot);
-      }
+    for (const held of store.expiredRetained(now() - maxAgeMs))
+      await releaseWorkspace(held, held, result, "its session did not return");
+    return result;
+  }
+
+  let reclaiming: Promise<WorkspaceSweepResult> | undefined;
+
+  /** One reclaim at a time: a second caller shares the pass already running. */
+  function reclaimSlots(policy: SlotReclaimPolicy): Promise<WorkspaceSweepResult> {
+    reclaiming ??= runReclaim(policy).finally(() => {
+      reclaiming = undefined;
+    });
+    return reclaiming;
+  }
+
+  async function runReclaim(policy: SlotReclaimPolicy): Promise<WorkspaceSweepResult> {
+    const result: WorkspaceSweepResult = { released: 0, failed: 0 };
+    // No session can restore these and no lease can release them, so they only ever leave through here.
+    for (const orphan of store.unownedWorkspaces())
+      await releaseWorkspace(orphan, undefined, result, "no session owns it");
+    // Under pressure the oldest idle workspace goes first. A reset that began and stopped is finished first.
+    if (store.freeSlots() >= policy.minFreeSlots) return result;
+    for (const held of store.evictableWorkspaces(now() - policy.minAgeMs)) {
+      if (store.freeSlots() >= policy.minFreeSlots) break;
+      await releaseWorkspace(held, held, result, "the host needed the slot for a new session");
     }
     return result;
   }
@@ -952,7 +1019,7 @@ export function createExecutorServer(options: ExecutorServerOptions): ExecutorSe
       if (!res.headersSent) sendJson(res, 500, { error: "internal_error" });
     });
   });
-  return Object.assign(server, { releaseExpiredWorkspaces });
+  return Object.assign(server, { releaseExpiredWorkspaces, reclaimSlots });
 }
 
 export interface ReconcileResult {

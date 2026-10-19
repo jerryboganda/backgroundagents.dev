@@ -47,6 +47,22 @@ record a secret value. Record run IDs, digests and PASS/FAIL lines only.
 | NPM forward hostnames on `polytronx-edge`, `access_log off` on `ai`                                                    | owner                                               | **NOT RUN**                                                                                                                                                                   | `templates/npm-edge-proxy.md`                                                     |
 | Periodic backup timer, and the backup-age alert                                                                        | VPS, owner approval                                 | **NOT RUN**                                                                                                                                                                   | `templates/polytronx-backup.*`, `monitor.sh`                                      |
 
+## Live executor acceptance (Linode 172.235.26.148, 2026-10-19)
+
+Run on the executor host against `127.0.0.1:8787`, commit ec7e19a5 (running image tag matches). One test sandbox, created and stopped by hand.
+
+| Check | Result |
+| --- | --- |
+| Health | **PASS**: 200 `{"ok":true}`, from the host and from the dashboard VPS over the private edge (HTTPS, pinned CA) |
+| No bearer token | **PASS**: 401 |
+| Token, no lease | **PASS**: 403 `admission_missing` |
+| Create with a signed lease and runtime context | **PASS**: 201, `reattached:false` |
+| `docker inspect` | **PASS**: runtime `runsc`, 2 CPUs, 4 GiB, swap = memory, 512 pids, no published ports, no `docker.sock`, mounts only the slot, home and resolv.conf, network `oi-sandbox` |
+| State survives executor restart | **PASS**: `GET /v1/sandboxes/<id>` 200 after `restart` |
+| Stop | **PASS**: 200 `{"stopped":true}`, no sandbox container left |
+| Finding | All sixteen workspace slots were retained by old stopped sessions (five real, one `sandbox-sweeptest` test row), so creates returned 503 `workspace_capacity_exhausted`. The test row and the acceptance row were removed from the state file (backup in /root/executor-state-backup-*). The five real workspaces were kept. They expire after the retained-workspace TTL (default three days). |
+| Not run | Egress proof, capacity test with the maximum sandboxes, an end-to-end agent session through the dashboard (needs GitHub sign-in), restore of a retained workspace |
+
 ## Runtime record (filled during deployment)
 
 | Date (UTC) | Check                   | Command or action              | Exit or result | Evidence reference                |

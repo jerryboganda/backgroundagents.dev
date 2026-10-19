@@ -285,7 +285,7 @@ jobs:
 
       - name: Render the executor stack, fail closed without its control-plane URL, and check it
         # Placeholders only: nothing here starts a container or reads a secret value. The checks
-        # read back what compose.executor.yml sets: one published port on loopback, six slots, the
+        # read back what compose.executor.yml sets: one published port on loopback, sixteen slots, the
         # state file, the control-plane URL, a non-root user, a read-only root filesystem, dropped
         # capabilities and limits. The control-plane URL is a fixture on the reserved .invalid TLD.
         run: |
@@ -314,7 +314,7 @@ jobs:
             if (!/^[1-9][0-9]*(:|$)/.test(String(service.user ?? ""))) problems.push("the executor does not run as a non-root numeric user");
             if (service.privileged) problems.push("privileged is set");
             const env = service.environment ?? {};
-            if (env.VPS_EXECUTOR_WORKSPACE_SLOTS !== "6") problems.push("the executor does not have six workspace slots");
+            if (env.VPS_EXECUTOR_WORKSPACE_SLOTS !== "16") problems.push("the executor does not have sixteen workspace slots");
             if (!String(env.VPS_EXECUTOR_STATE_FILE ?? "").endsWith("/executor-state.db")) problems.push("the state file is not executor-state.db");
             if ("VPS_EXECUTOR_WORKSPACE_TTL_HOURS" in env) problems.push("a workspace TTL is set; the TTL was removed");
             if (!env.VPS_EXECUTOR_CONTROL_PLANE_URL) problems.push("the control-plane URL is not set");
@@ -323,7 +323,7 @@ jobs:
               console.error(problems.join("\n"));
               process.exit(1);
             }
-            console.log("executor: loopback port, six slots, state file, control-plane URL, non-root, read-only, no capabilities, limits set");
+            console.log("executor: loopback port, sixteen slots, state file, control-plane URL, non-root, read-only, no capabilities, limits set");
           ' "$work/executor.json"
           grep -v '^VPS_EXECUTOR_CONTROL_PLANE_URL=' "$work/executor-release.env" >"$work/executor-no-url.env"
           if docker compose -p polytronx-executor --env-file "$work/executor-no-url.env" \

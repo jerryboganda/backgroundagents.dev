@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { createDockerRuntime, type SandboxLimits } from "./docker.ts";
 import { DEFAULT_MAX_LIFETIME_MS, DEFAULT_REAP_LIMITS, reapStaleContainers } from "./reaper.ts";
-import { createExecutorServer, reconcileContainers } from "./server.ts";
+import { createExecutorServer, reconcileContainers, type SlotReclaimPolicy } from "./server.ts";
 import { openStateStore } from "./state.ts";
 import { isWorkspaceRoot, WORKSPACE_SLOT_COUNT } from "./workspace.ts";
 
@@ -32,6 +32,7 @@ export interface ExecutorConfig {
   sandboxMaxLifetimeMs: number;
   /** A session's retained workspace is released once its last sandbox is older than this. */
   retainedWorkspaceTtlMs: number;
+  slotReclaim: SlotReclaimPolicy;
 }
 
 /**
@@ -87,6 +88,20 @@ export function readConfig(env: NodeJS.ProcessEnv): ExecutorConfig {
     throw new Error(
       "VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS must exceed VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS"
     );
+  // The janitor keeps this many slots free by releasing the oldest idle retained workspace. 0 turns early release off.
+  const minFreeSlots = Number(env.VPS_EXECUTOR_MIN_FREE_SLOTS ?? "2");
+  if (!Number.isInteger(minFreeSlots) || minFreeSlots < 0 || minFreeSlots >= workspaceSlots)
+    throw new Error(
+      "VPS_EXECUTOR_MIN_FREE_SLOTS must be an integer from 0 to one less than the slot count"
+    );
+  // The clock is the retaining sandbox's creation, so the default adds an hour of idleness on top of its full lifetime.
+  const reclaimAgeSeconds = Number(
+    env.VPS_EXECUTOR_RECLAIM_MIN_AGE_SECONDS ?? lifetimeSeconds + 3_600
+  );
+  if (!Number.isInteger(reclaimAgeSeconds) || reclaimAgeSeconds < lifetimeSeconds)
+    throw new Error(
+      "VPS_EXECUTOR_RECLAIM_MIN_AGE_SECONDS must be an integer of at least VPS_EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS"
+    );
   return {
     token,
     admissionSecret,
@@ -105,6 +120,7 @@ export function readConfig(env: NodeJS.ProcessEnv): ExecutorConfig {
     controlPlaneUrl,
     sandboxMaxLifetimeMs: lifetimeSeconds * 1000,
     retainedWorkspaceTtlMs: retainedSeconds * 1000,
+    slotReclaim: { minFreeSlots, minAgeMs: reclaimAgeSeconds * 1000 },
   };
 }
 
@@ -135,6 +151,7 @@ export async function main(env: NodeJS.ProcessEnv): Promise<void> {
     workspaceRoot: config.workspaceRoot,
     controlPlaneUrl: config.controlPlaneUrl,
     inFlight,
+    slotReclaim: config.slotReclaim,
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -170,6 +187,7 @@ export async function main(env: NodeJS.ProcessEnv): Promise<void> {
     releasing = true;
     server
       .releaseExpiredWorkspaces(config.retainedWorkspaceTtlMs)
+      .then(() => server.reclaimSlots(config.slotReclaim))
       .catch((error: unknown) => {
         const reason = error instanceof Error ? error.message : "unknown error";
         console.error(`vps-executor: workspace release failed: ${reason}`);

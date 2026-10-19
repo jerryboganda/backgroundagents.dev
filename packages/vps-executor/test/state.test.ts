@@ -920,7 +920,7 @@ describe("openStateStore", () => {
       await withStore(wide, () => {});
       await assert.rejects(openStateStore(wide, { workspaceSlots: 2 }), /more workspace slots/);
       await assert.rejects(
-        openStateStore(join(dir, "bad.db"), { workspaceSlots: 7 }),
+        openStateStore(join(dir, "bad.db"), { workspaceSlots: 17 }),
         /invalid workspace slot count/
       );
     });

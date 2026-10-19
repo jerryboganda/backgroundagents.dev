@@ -91,7 +91,7 @@ describe("workspaceMount and isWorkspaceRoot", () => {
       slot: 2,
       hostPath: join("/srv/vps-ws/slots", "2"),
     });
-    for (const slot of [-1, 1.5, 6, Number.NaN])
+    for (const slot of [-1, 1.5, 16, Number.NaN])
       assert.throws(() => workspaceMount("/srv/vps-ws/slots", slot), /invalid workspace slot/);
   });
 

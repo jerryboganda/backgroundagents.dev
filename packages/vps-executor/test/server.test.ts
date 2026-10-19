@@ -304,6 +304,10 @@ interface Executor {
   store: StateStore;
   runtime: DockerRuntime;
   releaseExpiredWorkspaces(maxAgeMs: number): Promise<{ released: number; failed: number }>;
+  reclaimSlots(policy: {
+    minFreeSlots: number;
+    minAgeMs: number;
+  }): Promise<{ released: number; failed: number }>;
   close(): Promise<void>;
 }
 
@@ -326,6 +330,7 @@ async function startExecutor(
     repairHome?: (slotPath: string) => Promise<void>;
     prepareHome?: (slotPath: string) => Promise<void>;
     resetWorkspace?: (hostPath: string) => Promise<void>;
+    slotReclaim?: { minFreeSlots: number; minAgeMs: number };
   } = {}
 ): Promise<Executor> {
   const runtime = createDockerRuntime({
@@ -348,6 +353,7 @@ async function startExecutor(
     repairHome: options.repairHome ?? (async () => {}),
     prepareHome: options.prepareHome ?? (async () => {}),
     resetWorkspace: options.resetWorkspace,
+    slotReclaim: options.slotReclaim,
     now: () => clock.nowMs,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -360,6 +366,7 @@ async function startExecutor(
     store,
     runtime,
     releaseExpiredWorkspaces: (maxAgeMs) => server.releaseExpiredWorkspaces(maxAgeMs),
+    reclaimSlots: (policy) => server.reclaimSlots(policy),
     close: async () => {
       await new Promise<void>((resolve, reject) => {
         server.closeAllConnections();
@@ -1606,7 +1613,11 @@ describe("executor HTTP API", () => {
         assert.equal(stopped.status, 200);
       }
       const refused = await request(executor, "POST", "/v1/sandboxes", {
-        body: createBody("sandbox-7", "session-7", "lease-7"),
+        body: createBody(
+          `sandbox-${WORKSPACE_SLOT_COUNT + 1}`,
+          `session-${WORKSPACE_SLOT_COUNT + 1}`,
+          `lease-${WORKSPACE_SLOT_COUNT + 1}`
+        ),
       });
       assert.equal(refused.status, 503);
       assert.deepEqual(await refused.json(), { error: "workspace_capacity_exhausted" });
@@ -2410,7 +2421,11 @@ describe("recovery of unknown outcomes and orphaned containers", () => {
       assert.equal(full.status, 503);
       assert.deepEqual(await full.json(), { error: "capacity_exhausted" });
       const held = await request(executor, "POST", "/v1/sandboxes", {
-        body: createBody("sandbox-7", "session-7", "lease-7"),
+        body: createBody(
+          "sandbox-7",
+          "session-7",
+          "lease-7"
+        ),
       });
       assert.equal(held.status, 409);
       assert.deepEqual(await held.json(), { error: "sandbox_id_conflict" });
@@ -3158,6 +3173,162 @@ describe("release of a stale retained workspace", () => {
           failed: 0,
         });
         assert.equal(executor.store.expiredRetained(NOW + 5 * DAY_MS).length, 0);
+      } finally {
+        await executor.close();
+      }
+    });
+  });
+});
+
+describe("automatic reclaim of stale and stuck slots", () => {
+  const HOUR_MS = 3_600_000;
+  /** Creates and stops one sandbox for its own session at `atMs`, leaving its workspace retained. */
+  async function retainAt(executor: Executor, n: number, atMs: number): Promise<void> {
+    executor.clock.nowMs = atMs;
+    const providerObjectId = await createSandbox(
+      executor,
+      createBody(`sandbox-${n}`, `session-${n}`, `lease-${n}`, atMs)
+    );
+    const stopped = await request(executor, "POST", `/v1/sandboxes/${providerObjectId}/stop`, {
+      body: { reason: "idle" },
+    });
+    assert.equal(stopped.status, 200);
+  }
+
+  it("releases a retained workspace no session owns, which no lease and no timer would ever free", async () => {
+    await withStateDir(async (stateFile) => {
+      const executor = await startExecutor(stateFile);
+      try {
+        await retainAt(executor, 1, NOW);
+        withRawDb(stateFile, (db) =>
+          db.exec("UPDATE workspaces SET session_id = '' WHERE state = 'retained'")
+        );
+        assert.equal(executor.store.unownedWorkspaces().length, 1);
+        const before = executor.store.freeSlots();
+        assert.deepEqual(await executor.reclaimSlots({ minFreeSlots: 0, minAgeMs: HOUR_MS }), {
+          released: 1,
+          failed: 0,
+        });
+        assert.equal(executor.store.freeSlots(), before + 1);
+        assert.equal(executor.store.unownedWorkspaces().length, 0);
+      } finally {
+        await executor.close();
+      }
+    });
+  });
+
+  it("frees the oldest idle workspace when fewer slots are free than the floor, and spares the newer ones", async () => {
+    await withExecutor(async (executor) => {
+      await retainAt(executor, 1, NOW);
+      await retainAt(executor, 2, NOW + HOUR_MS);
+      await retainAt(executor, 3, NOW + 2 * HOUR_MS);
+      executor.clock.nowMs = NOW + 10 * HOUR_MS;
+      const free = executor.store.freeSlots();
+      assert.deepEqual(await executor.reclaimSlots({ minFreeSlots: free + 1, minAgeMs: HOUR_MS }), {
+        released: 1,
+        failed: 0,
+      });
+      assert.equal(executor.store.freeSlots(), free + 1);
+      // The first session lost its workspace. The other two still have theirs to restore.
+      assert.equal(executor.store.expiredRetained(NOW + 20 * HOUR_MS).length, 2);
+      assert.equal(
+        executor.store
+          .expiredRetained(NOW + 20 * HOUR_MS)
+          .some((held) => held.sessionId === "session-1"),
+        false
+      );
+    });
+  });
+
+  it("does nothing while enough slots are free", async () => {
+    await withExecutor(async (executor) => {
+      await retainAt(executor, 1, NOW);
+      executor.clock.nowMs = NOW + 10 * HOUR_MS;
+      assert.deepEqual(
+        await executor.reclaimSlots({
+          minFreeSlots: executor.store.freeSlots(),
+          minAgeMs: HOUR_MS,
+        }),
+        { released: 0, failed: 0 }
+      );
+    });
+  });
+
+  it("never frees a workspace idle for less than the minimum age, even under pressure", async () => {
+    await withExecutor(async (executor) => {
+      await retainAt(executor, 1, NOW);
+      executor.clock.nowMs = NOW + HOUR_MS / 2;
+      assert.deepEqual(
+        await executor.reclaimSlots({ minFreeSlots: WORKSPACE_SLOT_COUNT, minAgeMs: HOUR_MS }),
+        { released: 0, failed: 0 }
+      );
+    });
+  });
+
+  it("never frees the workspace of a running sandbox", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      executor.clock.nowMs = NOW + 30 * HOUR_MS;
+      assert.deepEqual(
+        await executor.reclaimSlots({ minFreeSlots: WORKSPACE_SLOT_COUNT, minAgeMs: HOUR_MS }),
+        { released: 0, failed: 0 }
+      );
+      assert.equal(executor.store.occupancy(), 1);
+    });
+  });
+
+  it("finishes a reset that stopped half done, however recent, and resumes it on the next pass", async () => {
+    await withStateDir(async (stateFile) => {
+      let failing = true;
+      const executor = await startExecutor(
+        stateFile,
+        new FakeDocker(),
+        { nowMs: NOW },
+        {
+          resetWorkspace: async () => {
+            if (failing) throw new Error("disk busy");
+          },
+        }
+      );
+      try {
+        await retainAt(executor, 1, NOW);
+        executor.clock.nowMs = NOW + 10 * HOUR_MS;
+        const policy = { minFreeSlots: WORKSPACE_SLOT_COUNT, minAgeMs: HOUR_MS };
+        assert.deepEqual(await executor.reclaimSlots(policy), { released: 0, failed: 1 });
+        failing = false;
+        // A recent sandbox would be spared as retained, but a begun reset is finished at any age.
+        executor.clock.nowMs = NOW;
+        assert.deepEqual(await executor.reclaimSlots(policy), { released: 1, failed: 0 });
+        assert.equal(executor.store.freeSlots(), WORKSPACE_SLOT_COUNT);
+      } finally {
+        await executor.close();
+      }
+    });
+  });
+
+  it("starts a reclaim when a create finds every slot taken, so the retry succeeds", async () => {
+    await withStateDir(async (stateFile) => {
+      const executor = await startExecutor(
+        stateFile,
+        new FakeDocker(),
+        { nowMs: NOW },
+        {
+          slotReclaim: { minFreeSlots: 1, minAgeMs: HOUR_MS },
+        }
+      );
+      try {
+        for (let n = 1; n <= WORKSPACE_SLOT_COUNT; n += 1) await retainAt(executor, n, NOW + n);
+        const later = NOW + 10 * HOUR_MS;
+        executor.clock.nowMs = later;
+        const body = createBody("sandbox-new", "session-new", "lease-new", later);
+        const refused = await request(executor, "POST", "/v1/sandboxes", { body });
+        assert.equal(refused.status, 503);
+        assert.deepEqual(await refused.json(), { error: "workspace_capacity_exhausted" });
+        for (let tries = 0; tries < 200 && executor.store.freeSlots() === 0; tries += 1)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.ok(executor.store.freeSlots() >= 1);
+        const retried = await request(executor, "POST", "/v1/sandboxes", { body });
+        assert.equal(retried.status, 201);
       } finally {
         await executor.close();
       }

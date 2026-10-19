@@ -119,7 +119,7 @@ describe("readConfig", () => {
     );
   });
 
-  it("defaults to the six provisioned slots under the host root, and refuses others", () => {
+  it("defaults to the sixteen provisioned slots under the host root, and refuses others", () => {
     const env = {
       VPS_EXECUTOR_TOKEN: TOKEN,
       VPS_EXECUTOR_ADMISSION_SECRET: ADMISSION_SECRET,
@@ -128,8 +128,8 @@ describe("readConfig", () => {
     };
     const config = readConfig(env);
     assert.equal(config.workspaceRoot, "/srv/vps-ws/slots");
-    assert.equal(config.workspaceSlots, 6);
-    for (const slots of ["0", "7", "two", "1.5"])
+    assert.equal(config.workspaceSlots, 16);
+    for (const slots of ["0", "17", "two", "1.5"])
       assert.throws(
         () => readConfig({ ...env, VPS_EXECUTOR_WORKSPACE_SLOTS: slots }),
         /VPS_EXECUTOR_WORKSPACE_SLOTS/

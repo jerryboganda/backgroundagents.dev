@@ -29,7 +29,7 @@ const TOOLS = [
   "chmod",
   "systemctl",
 ];
-const SLOTS = [0, 1, 2, 3, 4, 5];
+const SLOTS = Array.from({ length: 16 }, (_, k) => k);
 const DEFAULT_FSTAB = "UUID=root / ext4 defaults 0 1\nproc /proc proc defaults 0 0\n";
 const MUTATING = /^(fallocate|mkfs\.ext4|mount|chmod|systemctl)\b/;
 
@@ -74,7 +74,7 @@ const withoutComments = (text) =>
     .join("\n");
 
 describe("workspace-slots.sh --apply on a new host", () => {
-  it("creates six images with the pinned flags, mounts each slot by its own path, and keeps the rest of fstab", () => {
+  it("creates sixteen images with the pinned flags, mounts each slot by its own path, and keeps the rest of fstab", () => {
     const h = scratchHost();
     const result = run(h, ["--apply"]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -201,7 +201,7 @@ describe("workspace-slots.sh --check", () => {
     const result = run(h, ["--check"]);
     assert.equal(result.status, 1);
     assert.match(result.stdout, /FAIL {2}slot 3: .*root is not 1000:1000 mode 700/);
-    for (const k of [0, 1, 2, 4, 5]) assert.match(result.stdout, new RegExp(`PASS  slot ${k}: `));
+    for (const k of SLOTS.filter((s) => s !== 3)) assert.match(result.stdout, new RegExp(`PASS  slot ${k}: `));
   });
 
   it("fails a provisioned slot that is not mounted, which is what a failed boot mount looks like", () => {
@@ -255,9 +255,9 @@ describe("the executor's view of the slots", () => {
     }
   });
 
-  it("fixes the six slots, the state file and the trusted control-plane URL, with only the retained-workspace release timer, and publishes the API on loopback only", () => {
+  it("fixes the sixteen slots, the state file and the trusted control-plane URL, with only the retained-workspace release timer, and publishes the API on loopback only", () => {
     assert.match(compose, /VPS_EXECUTOR_WORKSPACE_ROOT: \/srv\/vps-ws\/slots/);
-    assert.match(compose, /VPS_EXECUTOR_WORKSPACE_SLOTS: "6"/);
+    assert.match(compose, /VPS_EXECUTOR_WORKSPACE_SLOTS: "16"/);
     assert.match(compose, /VPS_EXECUTOR_STATE_FILE: \/var\/lib\/vps-executor\/executor-state\.db/);
     assert.match(compose, /VPS_EXECUTOR_CONTROL_PLANE_URL: \$\{VPS_EXECUTOR_CONTROL_PLANE_URL:\?/);
     assert.match(compose, /- "127\.0\.0\.1:8787:8787"/);

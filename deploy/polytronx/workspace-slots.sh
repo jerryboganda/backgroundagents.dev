@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Workspace slots for the VPS executor: six 10 GiB ext4 images, each loop-mounted at
+# Workspace slots for the VPS executor: sixteen 10 GiB ext4 images, each loop-mounted at
 # /srv/vps-ws/slots/<k>. A sandbox binds one slot as its /workspace (packages/vps-executor/src/workspace.ts).
 #
 #   workspace-slots.sh --check   read-only: one PASS or FAIL line per item; exit 1 on any FAIL
@@ -8,14 +8,14 @@
 #
 # --apply judges the whole host first, so a refusal changes no image and no fstab line. It never
 # formats, overwrites or removes an existing image or file. It mounts each slot by its own path,
-# never with mount -a, and it never runs fsck. It backs up /etc/fstab, then appends only its six
+# never with mount -a, and it never runs fsck. It backs up /etc/fstab, then appends only its sixteen
 # lines. Re-running it is safe: a slot already in the expected state is left alone.
 
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-SLOT_COUNT=6
+SLOT_COUNT=16
 SLOT_BYTES=10737418240          # 10 GiB, the size of every image (fallocate -l 10G)
 FS_MIN_BYTES=9663676416         # 9 GiB: the filesystem inside an image is a little smaller than the image
 HOST_FREE_MIN_BYTES=32212254720 # 30 GiB that must stay free on the images' filesystem

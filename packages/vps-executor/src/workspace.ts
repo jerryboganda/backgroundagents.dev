@@ -43,7 +43,7 @@ import { dirname, join } from "node:path";
  * - An unmounted slot is root-owned 0700, so both the identity proof and the reset refuse it.
  */
 
-export const WORKSPACE_SLOT_COUNT = 6;
+export const WORKSPACE_SLOT_COUNT = 16;
 export const WORKSPACE_UID = 1000;
 export const WORKSPACE_GID = 1000;
 /** Bytes per slot image. The slot's filesystem is this size less ext4 metadata. */

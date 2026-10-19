@@ -10,14 +10,14 @@ been run against a host. CI starts no sandbox.
   in `pins.env`. Runs as `node`. Docker CLI only. No socket or secret in the image.
 - `compose.executor.yml`: one service. Only this service mounts the Docker socket. It binds the
   workspace slot root, `/srv/vps-ws/slots`, at the same path. The port is published on
-  `127.0.0.1:8787` only. Six slots, the state file `executor-state.db` and the required
+  `127.0.0.1:8787` only. Sixteen slots, the state file `executor-state.db` and the required
   `VPS_EXECUTOR_CONTROL_PLANE_URL` are fixed in the file; there is no workspace TTL. Read-only root
   filesystem, all capabilities dropped, `no-new-privileges`, CPU and memory limits (defaults 1 CPU
   and 512m, overridable). Secrets come from `executor.env` through `env_file`.
 - Sandboxes (`docker.ts`): `--runtime runsc`, `--cpus` and `--memory` from the release file, swap
   equal to memory, 512 pids, one bind mount (the sandbox's workspace slot at `/workspace`), no
   published ports, no socket.
-- `workspace-slots.sh`: one-time host setup of the six workspace slots as root. Its `--check` is
+- `workspace-slots.sh`: one-time host setup of the sixteen workspace slots as root. Its `--check` is
   read-only and runs inside preflight.
 - `preflight-executor.sh` (read-only) and `deploy-executor.sh` (refuses without
   `--confirm polytronx-executor`).
@@ -25,7 +25,7 @@ been run against a host. CI starts no sandbox.
   - `verify`: pin and overlay check, `bash -n` on `deploy/polytronx/*.sh`, deployment guard tests.
   - `vps-executor`: Dockerfile `NODE_IMAGE` matches `pins.env`, executor typecheck and tests,
     control-plane admission and VPS-provider tests (fakes only).
-  - `compose-render`: renders the executor with placeholders, checks the loopback port, six slots,
+  - `compose-render`: renders the executor with placeholders, checks the loopback port, sixteen slots,
     the state file, the control-plane URL, user, read-only root, capabilities and limits, and fails
     closed without `VPS_EXECUTOR_CONTROL_PLANE_URL`.
   - `images`: builds the executor image, runs it with no runtime and expects 503, exports

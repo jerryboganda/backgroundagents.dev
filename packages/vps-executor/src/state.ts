@@ -180,6 +180,19 @@ export interface StateStore {
    * never listed, since only an operator releases it.
    */
   expiredRetained(createdBeforeMs: number): RetainedWorkspace[];
+  /** Slots that are free to take a new sandbox. */
+  freeSlots(): number;
+  /**
+   * Workspaces no session owns (session ''), retained or mid-reset. Nothing can restore one, and no lease can release
+   * it, so only the executor's own janitor does.
+   */
+  unownedWorkspaces(): { workspaceSlot: number; sandboxId: string }[];
+  /**
+   * Session-owned workspaces that may be released to free a slot, in the order to release them: a reset already begun
+   * first, then the oldest retaining sandbox first. A retained one counts only when its retaining sandbox was created
+   * before `createdBeforeMs`, and one whose retaining sandbox is unknown counts as the oldest.
+   */
+  evictableWorkspaces(createdBeforeMs: number): RetainedWorkspace[];
   /** True when a settlement closed this lease, or closed its sandbox id. No create admits either. */
   settledFor(leaseToken: string, sandboxId: string): boolean;
   /** What a settlement would find for a scope, read in one transaction. `settle` judges it again before it writes. */
@@ -469,6 +482,18 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
       WHERE w.state IN ('retained', 'resetting') AND w.session_id != '' AND s.created_at_ms < ?
       ORDER BY s.created_at_ms`
   );
+  const freeSlotsStmt = db.prepare("SELECT COUNT(*) AS count FROM workspaces WHERE state = 'free'");
+  const unownedStmt = db.prepare(
+    "SELECT slot, sandbox_id FROM workspaces WHERE state IN ('retained', 'resetting') AND session_id = '' AND sandbox_id IS NOT NULL ORDER BY slot"
+  );
+  const evictableStmt = db.prepare(
+    `SELECT w.slot, w.sandbox_id, w.session_id, w.retained_lease
+       FROM workspaces w LEFT JOIN sandboxes s ON s.lease_token = w.retained_lease
+      WHERE w.state IN ('retained', 'resetting') AND w.session_id != '' AND w.sandbox_id IS NOT NULL
+        AND w.retained_lease IS NOT NULL
+        AND (w.state = 'resetting' OR COALESCE(s.created_at_ms, 0) < ?)
+      ORDER BY (w.state = 'resetting') DESC, COALESCE(s.created_at_ms, 0), w.slot`
+  );
   const beginResetStmt = db.prepare(
     "UPDATE workspaces SET state = 'resetting' WHERE slot = ? AND state = 'retained'"
   );
@@ -676,6 +701,19 @@ function createStore(db: DatabaseSync, owner: DatabaseSync): StateStore {
     occupancy: () => Number(occupancyStmt.get()?.count),
     expiredRetained: (createdBeforeMs) =>
       expiredRetainedStmt.all(createdBeforeMs).map((row) => ({
+        workspaceSlot: Number(row.slot),
+        sandboxId: String(row.sandbox_id),
+        sessionId: String(row.session_id),
+        leaseToken: String(row.retained_lease),
+      })),
+    freeSlots: () => Number(freeSlotsStmt.get()?.count),
+    unownedWorkspaces: () =>
+      unownedStmt.all().map((row) => ({
+        workspaceSlot: Number(row.slot),
+        sandboxId: String(row.sandbox_id),
+      })),
+    evictableWorkspaces: (createdBeforeMs) =>
+      evictableStmt.all(createdBeforeMs).map((row) => ({
         workspaceSlot: Number(row.slot),
         sandboxId: String(row.sandbox_id),
         sessionId: String(row.session_id),

@@ -197,7 +197,7 @@ describe("buildRunArgs", () => {
       /invalid workspace mount/
     );
     assert.throws(
-      () => buildRunArgs("sandbox-1", IMAGE, LIMITS, { slot: 6, hostPath: "/srv/vps-ws/slots/6" }),
+      () => buildRunArgs("sandbox-1", IMAGE, LIMITS, { slot: 16, hostPath: "/srv/vps-ws/slots/16" }),
       /invalid workspace mount/
     );
     assert.throws(

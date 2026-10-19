@@ -138,7 +138,7 @@ export function runScript(sandbox, script, args, env = {}) {
     encoding: "utf8",
     cwd: sandbox.root,
     env: childEnv(sandbox, env),
-    timeout: 120_000,
+    timeout: 360_000,
   });
 }
 
