@@ -28,7 +28,7 @@ NODE_IMAGE="$(grep -m1 '^CONTROL_PLANE_IMAGE=' "$STATE_DIR/release.env" | cut -d
 docker image inspect "$NODE_IMAGE" >/dev/null 2>&1 || { log "control-plane image is not on this host; skipping"; exit 0; }
 
 run_node() {
-  docker run --rm --entrypoint node -v "$SRC:/src" -v "$STATE_DIR:/state" -w /src "$NODE_IMAGE" scripts/opencode-model-sync.mjs "$@"
+  docker run --rm --user 0 --entrypoint node -v "$SRC:/src" -v "$STATE_DIR:/state" -w /src "$NODE_IMAGE" scripts/opencode-model-sync.mjs "$@"
 }
 
 if ! result="$(run_node check --models /src/packages/shared/src/models.ts 2>>"$LOG")"; then

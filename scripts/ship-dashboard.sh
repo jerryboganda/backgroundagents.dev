@@ -15,7 +15,7 @@ tar -x -C source
 chmod +x source/deploy/polytronx/*.sh
 # Free models the two-hourly sync added on the host are not in this commit yet; carry them into the new tree.
 NODE_IMAGE=\$(grep -m1 ^CONTROL_PLANE_IMAGE= state/release.env | cut -d= -f2-)
-[ -f state/model-additions.json ] && docker run --rm --entrypoint node -v \$PWD/source:/src -v \$PWD/state:/state -w /src \$NODE_IMAGE scripts/opencode-model-sync.mjs replay --models /src/packages/shared/src/models.ts --state /state/model-additions.json || true"
+[ -f state/model-additions.json ] && docker run --rm --user 0 --entrypoint node -v \$PWD/source:/src -v \$PWD/state:/state -w /src \$NODE_IMAGE scripts/opencode-model-sync.mjs replay --models /src/packages/shared/src/models.ts --state /state/model-additions.json || true"
 ssh "$HOST" "set -e; cd /opt/polytronx/openinspect/source
 REV=\$(grep ^UPSTREAM_REVISION= deploy/polytronx/pins.env | cut -d= -f2); echo \$REV > REVISION
 WS=\$(grep ^PUBLIC_WS_URL= deploy/polytronx/pins.env | cut -d= -f2)
