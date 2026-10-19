@@ -1,0 +1,8 @@
+# Template: copy to /etc/systemd/system/. Adds new OpenCode free-tier models to the model picker and deploys them.
+[Unit]
+Description=PolytronX OpenInspect OpenCode model catalog sync
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /opt/polytronx/openinspect/state/model-sync.lock /opt/polytronx/openinspect/source/deploy/polytronx/update-opencode-models.sh
+TimeoutStartSec=1h

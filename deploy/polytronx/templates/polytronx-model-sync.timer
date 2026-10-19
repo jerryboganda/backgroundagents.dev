@@ -1,0 +1,11 @@
+# Template: runs the OpenCode model sync every two hours. Enable with systemctl enable --now polytronx-model-sync.timer.
+[Unit]
+Description=Check OpenCode for new free models every two hours
+
+[Timer]
+OnCalendar=*-*-* 00/2:25:00
+Persistent=true
+Unit=polytronx-model-sync.service
+
+[Install]
+WantedBy=timers.target
