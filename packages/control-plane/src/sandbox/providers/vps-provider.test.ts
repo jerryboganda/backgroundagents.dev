@@ -70,6 +70,30 @@ describe("VpsSandboxProvider", () => {
   };
   const provider = () => createVpsProvider({ executorUrl, executorToken, admissionSecret, leases });
 
+  it("asks the executor to release a deleted session's workspaces and reports what remains", async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ released: 2, remaining: 1 }));
+
+    await expect(provider().releaseSessionWorkspaces("session/1")).resolves.toEqual({
+      remaining: 1,
+    });
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${executorUrl}/v1/sessions/session%2F1/release-workspaces`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ reason: "session_deleted" });
+  });
+
+  it("fails the release when the executor refuses or answers unreadably, so the delete does not proceed", async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ error: "state_unavailable" }, 503));
+    await expect(provider().releaseSessionWorkspaces("session-1")).rejects.toBeInstanceOf(
+      SandboxProviderError
+    );
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ released: 1 }));
+    await expect(provider().releaseSessionWorkspaces("session-1")).rejects.toBeInstanceOf(
+      SandboxProviderError
+    );
+  });
+
   it("advertises only the capabilities it implements", () => {
     expect(provider().capabilities).toEqual({
       supportsSandboxTimeout: false,

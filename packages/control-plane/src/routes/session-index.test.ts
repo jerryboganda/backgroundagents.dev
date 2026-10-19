@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleListSessionInbox, handleListSessions, handlePatchReadState } from "./session-index";
+import {
+  handleDeleteSession,
+  handleListSessionInbox,
+  handleListSessions,
+  handlePatchReadState,
+} from "./session-index";
 import { MAX_SESSION_LIST_FILTER_IDS } from "@open-inspect/shared/session-list-query";
 import type { RequestContext, UserRouteContext } from "./shared";
 import type { SqlDatabase } from "../db/sql-database";
@@ -14,8 +19,14 @@ const mockSessionIndexStore = {
   listInbox: vi.fn(),
   listInboxSnapshot: vi.fn(),
   delete: vi.fn(),
+  listDescendantIds: vi.fn(),
   updateReadState: vi.fn(),
 };
+const mockSessionRuntime = { fetch: vi.fn() };
+
+vi.mock("./session-route", () => ({
+  withSessionRuntime: (_env: unknown, ctx: object) => ({ ...ctx, sessionRuntime: mockSessionRuntime }),
+}));
 
 vi.mock("../db/session-index", () => ({
   SessionIndexStore: vi.fn().mockImplementation(function () {
@@ -589,6 +600,55 @@ describe("session index routes", () => {
       "session-1",
       expectedAction
     );
+  });
+});
+
+describe("session delete", () => {
+  beforeEach(() => {
+    mockSessionIndexStore.delete.mockReset().mockResolvedValue(true);
+    mockSessionIndexStore.listDescendantIds.mockReset().mockResolvedValue([]);
+    mockSessionRuntime.fetch.mockReset().mockImplementation(async () =>
+      Response.json({ status: "purged", existed: true })
+    );
+  });
+  const remove = (id: string) =>
+    handleDeleteSession(
+      new Request(`https://test.example/sessions/${id}`, { method: "DELETE" }),
+      createTestEnv(),
+      { id },
+      createCtx()
+    );
+
+  it("purges each child before its parent, removing an index row only after its own purge", async () => {
+    mockSessionIndexStore.listDescendantIds.mockResolvedValue(["grandchild", "child"]);
+
+    const response = await remove("parent");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "deleted", sessionId: "parent" });
+    expect(mockSessionRuntime.fetch.mock.calls.map(([id]) => id)).toEqual([
+      "grandchild",
+      "child",
+      "parent",
+    ]);
+    expect(mockSessionIndexStore.delete.mock.calls.map(([id]) => id)).toEqual([
+      "grandchild",
+      "child",
+      "parent",
+    ]);
+    expect(mockSessionRuntime.fetch.mock.calls[0][1]).toBe("/internal/purge");
+  });
+
+  it("keeps the session and its parent when a purge fails, so the delete can be retried", async () => {
+    mockSessionIndexStore.listDescendantIds.mockResolvedValue(["child"]);
+    mockSessionRuntime.fetch.mockResolvedValueOnce(Response.json({ error: "nope" }, { status: 502 }));
+
+    const response = await remove("parent");
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "nope", sessionId: "child" });
+    expect(mockSessionIndexStore.delete).not.toHaveBeenCalled();
+    expect(mockSessionRuntime.fetch).toHaveBeenCalledTimes(1);
   });
 });
 

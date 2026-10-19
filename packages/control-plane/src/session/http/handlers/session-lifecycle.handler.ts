@@ -68,7 +68,8 @@ export class SessionLifecycleHandler {
     private readonly titleService: SessionTitleService,
     private readonly sandboxLifecycle: SandboxCancellation,
     private readonly durableObjectId: string,
-    private readonly cancelSession: () => Promise<void>
+    private readonly cancelSession: () => Promise<void>,
+    private readonly purgeSessionData: () => Promise<void> = async () => {}
   ) {}
 
   getState(): Response {
@@ -250,6 +251,27 @@ export class SessionLifecycleHandler {
     const settled = await this.statusService.settleFromMessageState();
 
     return Response.json({ status: settled });
+  }
+
+  /**
+   * Permanently delete this session's runtime data after route-level delete authorization: cancels live work, destroys
+   * the sandbox and its saved workspace, removes the media, then empties the store. Safe to repeat: a session already
+   * emptied answers 200 too, and a failed step answers 502 with nothing past it done, so a retry resumes.
+   */
+  async purge(): Promise<Response> {
+    const session = this.sessionCoreRepository.getSession();
+    if (!session) return Response.json({ status: "purged", existed: false });
+    try {
+      if (isCancellable(session.status)) await this.cancelSession();
+      await this.sandboxLifecycle.destroyForDelete();
+      await this.purgeSessionData();
+    } catch (error) {
+      return Response.json(
+        { error: error instanceof Error ? error.message : "Session purge failed" },
+        { status: 502 }
+      );
+    }
+    return Response.json({ status: "purged", existed: true });
   }
 
   async cancel(): Promise<Response> {

@@ -2112,6 +2112,36 @@ export class SandboxLifecycleManager
   }
 
   /**
+   * A deleted session's sandbox is destroyed, not saved, and the provider's saved workspace is discarded. Each step
+   * throws when the provider does not confirm it, so the delete stops and a retry finishes the rest.
+   */
+  async destroyForDelete(): Promise<void> {
+    const sandbox = this.storage.getSandbox();
+    if (shouldStopSandboxOnSessionCancel(sandbox?.status)) {
+      if (this.wsManager.getSandboxWebSocket()) {
+        this.wsManager.sendToSandbox({ type: "shutdown" });
+      }
+      this.storage.updateSandboxStatus("stopped");
+      if (sandbox?.modal_object_id && this.canStopProviderSandbox()) {
+        await this.stopProviderSandbox(
+          "session_deleted",
+          "destroy",
+          undefined,
+          sandbox.modal_object_id
+        );
+      }
+    }
+    const session = this.sessionContext.getSession();
+    if (session && this.provider.releaseSessionWorkspaces) {
+      const { remaining } = await this.provider.releaseSessionWorkspaces(
+        session.session_name || session.id
+      );
+      if (remaining > 0)
+        throw new Error("The provider still holds a saved workspace for this session");
+    }
+  }
+
+  /**
    * An archived session's sandbox is saved and stopped now: its runtime may
    * hold work no save covers yet, and archive refuses its reconnects.
    */

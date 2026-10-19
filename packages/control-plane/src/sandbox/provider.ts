@@ -661,6 +661,13 @@ export interface SandboxProvider {
    * Only available if `capabilities.supportsExplicitStop` is true.
    */
   stopSandbox?(config: StopConfig): Promise<StopResult>;
+
+  /**
+   * Discard the workspace a provider keeps for a stopped session (a deleted session's saved files). Resolves with how
+   * many workspaces it could not free, which are still held (a running sandbox uses one, or a clear failed). Providers
+   * that keep nothing past a stop leave it out.
+   */
+  releaseSessionWorkspaces?(sessionId: string, signal?: AbortSignal): Promise<{ remaining: number }>;
 }
 
 /** Existing capability-based preserve-stop policy; resume support is checked separately at startup. */

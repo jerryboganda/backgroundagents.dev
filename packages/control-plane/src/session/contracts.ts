@@ -104,6 +104,7 @@ export const SessionInternalPaths = {
   wsToken: "/internal/ws-token",
   archive: "/internal/archive",
   unarchive: "/internal/unarchive",
+  purge: "/internal/purge",
   expireDraft: "/internal/expire-draft",
   verifySandboxToken: "/internal/verify-sandbox-token",
   openaiTokenRefresh: "/internal/openai-token-refresh",

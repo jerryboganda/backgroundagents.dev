@@ -407,6 +407,7 @@ export function createMockProvider(
     resumeSandbox: (config: ResumeConfig) => Promise<ResumeResult>;
     takeSnapshot: (config: SnapshotConfig) => Promise<SnapshotResult>;
     stopSandbox: (config: StopConfig) => Promise<StopResult>;
+    releaseSessionWorkspaces: (sessionId: string) => Promise<{ remaining: number }>;
     capabilities: Partial<SandboxProvider["capabilities"]>;
   }> = {}
 ): SandboxProvider {
@@ -446,6 +447,9 @@ export function createMockProvider(
   }
   if (overrides.stopSandbox) {
     provider.stopSandbox = overrides.stopSandbox;
+  }
+  if (overrides.releaseSessionWorkspaces) {
+    provider.releaseSessionWorkspaces = overrides.releaseSessionWorkspaces;
   }
   return provider;
 }

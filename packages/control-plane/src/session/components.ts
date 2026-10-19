@@ -189,6 +189,24 @@ const WS_AUTH_TIMEOUT_MS = 30000; // 30 seconds
  * spy on or substitute live collaborators, and production code must not
  * reach through it.
  */
+/** Every table of a session's own store, emptied by a delete. The `session` row goes last, so a repeat finds nothing. */
+const SESSION_PURGE_TABLES = [
+  "events",
+  "messages",
+  "artifacts",
+  "attachments",
+  "step_usage",
+  "session_diff",
+  "terminal_message_projection_pending",
+  "ws_client_mapping",
+  "sandbox_preservation",
+  "session_alarm_state",
+  "participants",
+  "sandbox",
+  "session_repositories",
+  "session",
+] as const;
+
 export interface SessionRuntime {
   readonly log: Logger;
   readonly server: SessionServer<SessionWebSocket, ClientInfo>;
@@ -816,6 +834,26 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     durableObjectId,
     async () => {
       await statusService.cancel(() => messageQueue.cancelExecution());
+    },
+    async () => {
+      // Media first: its keys live in the rows the wipe removes, so a failed delete leaves them to retry.
+      const keys = [
+        ...(
+          sql
+            .exec(
+              `SELECT url FROM artifacts WHERE type IN ('screenshot', 'video') AND url IS NOT NULL`
+            )
+            .toArray() as Array<{ url: string }>
+        ).map((row) => row.url),
+        ...(
+          sql.exec(`SELECT object_key FROM attachments`).toArray() as Array<{ object_key: string }>
+        ).map((row) => row.object_key),
+      ];
+      for (const key of keys) await env.MEDIA_BUCKET.delete(key);
+      // Children first, then the session row, in one transaction: a purge is all or nothing.
+      transaction(() => {
+        for (const table of SESSION_PURGE_TABLES) sql.exec(`DELETE FROM ${table}`);
+      });
     }
   );
   const sessionBudgetHandler = new SessionBudgetHandler(sessionCoreRepository, budgetService, () =>
@@ -978,6 +1016,7 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     budget: (request) => sessionBudgetHandler.update(request),
     archive: () => sessionLifecycleHandler.archive(),
     unarchive: () => sessionLifecycleHandler.unarchive(),
+    purge: () => sessionLifecycleHandler.purge(),
     expireDraft: () => sessionLifecycleHandler.expireDraft(),
     verifySandboxToken: (request, _url, requestLog) =>
       sandboxHandler.verifySandboxToken(request, requestLog),

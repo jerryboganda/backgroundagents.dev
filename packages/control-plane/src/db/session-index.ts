@@ -830,13 +830,37 @@ export class SessionIndexStore {
 
   async delete(id: string): Promise<boolean> {
     // Member rows are removed explicitly for clarity; the FK's ON DELETE
-    // CASCADE also covers callers that delete the session row directly.
-    const [, result] = await this.db.batch([
+    // CASCADE also covers callers that delete the session row directly. The
+    // admission reservation FK deliberately has no cascade: a session that
+    // still holds a sandbox slot is refused here, and the slot frees only
+    // through a confirmed provider stop. Automation runs outlive the session,
+    // unlinked.
+    const [, , result] = await this.db.batch([
       this.db.prepare("DELETE FROM session_repositories WHERE session_id = ?").bind(id),
+      this.db.prepare("UPDATE automation_runs SET session_id = NULL WHERE session_id = ?").bind(id),
       this.db.prepare("DELETE FROM sessions WHERE id = ?").bind(id),
     ]);
 
     return (result.meta?.changes ?? 0) > 0;
+  }
+
+  /** Every descendant of a session in any status, deepest first, so a delete removes children before parents. */
+  async listDescendantIds(parentSessionId: string): Promise<string[]> {
+    const result = await this.db
+      .prepare(
+        `WITH RECURSIVE descendants(id, depth) AS (
+           SELECT id, 1 FROM sessions WHERE parent_session_id = ?
+           UNION ALL
+           SELECT sessions.id, descendants.depth + 1
+           FROM sessions
+           JOIN descendants ON sessions.parent_session_id = descendants.id
+           WHERE descendants.depth < ${MAX_DESCENDANT_DEPTH}
+         )
+         SELECT id FROM descendants ORDER BY depth DESC`
+      )
+      .bind(parentSessionId)
+      .all<{ id: string }>();
+    return (result.results || []).map(({ id }) => id);
   }
 
   /** List children of a parent session, newest first. */

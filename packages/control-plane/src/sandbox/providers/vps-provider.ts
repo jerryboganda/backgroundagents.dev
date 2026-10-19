@@ -340,6 +340,28 @@ export class VpsSandboxProvider implements SandboxProvider {
     };
   }
 
+  async releaseSessionWorkspaces(
+    sessionId: string,
+    signal?: AbortSignal
+  ): Promise<{ remaining: number }> {
+    const { status, body } = await this.exchange(
+      "release session workspaces",
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/release-workspaces`,
+      { reason: "session_deleted" },
+      signal
+    );
+    assertOk("release session workspaces", status);
+    const remaining = (body as { remaining?: unknown } | undefined)?.remaining;
+    if (typeof remaining !== "number" || !Number.isInteger(remaining) || remaining < 0)
+      throw SandboxProviderError.fromFetchError(
+        "Failed to release session workspaces: executor returned an unreadable answer",
+        undefined,
+        status
+      );
+    return { remaining };
+  }
+
   async stopSandbox(config: StopConfig): Promise<StopResult> {
     // No resume support, so state cannot be kept. Refuse rather than destroy silently.
     if (config.intent === "preserve")

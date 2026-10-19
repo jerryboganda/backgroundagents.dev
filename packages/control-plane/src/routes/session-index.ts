@@ -25,6 +25,8 @@ import {
 } from "@open-inspect/shared/types/sessions";
 import { isCanonicalUserId } from "@open-inspect/shared/user-id";
 import { SessionIndexStore } from "../db/session-index";
+import { SessionInternalPaths } from "../session/contracts";
+import { withSessionRuntime } from "./session-route";
 import {
   error,
   GITHUB_USER_OR_SERVICE_ROUTE,
@@ -465,7 +467,32 @@ export async function handleDeleteSession(
   const sessionId = params.id;
 
   const sessionStore = new SessionIndexStore(ctx.db);
-  await sessionStore.delete(sessionId);
+  const { sessionRuntime } = withSessionRuntime(env, ctx);
+  // Children first, each one fully purged before its index row goes, so a failure leaves a session that can be
+  // deleted again: nothing is removed from the index until its sandbox, workspace, media and runtime data are gone.
+  const ids = [...(await sessionStore.listDescendantIds(sessionId)), sessionId];
+  for (const id of ids) {
+    const purged = await sessionRuntime.fetch(id, SessionInternalPaths.purge, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (!purged.ok) {
+      const detail = (await purged.json().catch(() => ({}))) as { error?: string };
+      log.error("session.delete_failed", {
+        event: "session.delete_failed",
+        session_id: id,
+        status: purged.status,
+        request_id: ctx.request_id,
+        trace_id: ctx.trace_id,
+      });
+      return json(
+        { error: detail.error ?? "Session delete failed; try again", sessionId: id },
+        502
+      );
+    }
+    await sessionStore.delete(id);
+  }
 
   return json({ status: "deleted", sessionId });
 }

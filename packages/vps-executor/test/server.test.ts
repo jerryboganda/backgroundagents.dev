@@ -3336,6 +3336,50 @@ describe("automatic reclaim of stale and stuck slots", () => {
   });
 });
 
+describe("release of a deleted session's workspaces", () => {
+  const release = (executor: Executor, sessionId: string) =>
+    request(executor, "POST", `/v1/sessions/${sessionId}/release-workspaces`, {
+      body: { reason: "session_deleted" },
+    });
+
+  it("frees every retained workspace of the session and no other session's", async () => {
+    await withExecutor(async (executor) => {
+      for (const n of [1, 2]) {
+        const providerObjectId = await createSandbox(
+          executor,
+          createBody(`sandbox-${n}`, `session-${n}`, `lease-${n}`)
+        );
+        const stopped = await request(executor, "POST", `/v1/sandboxes/${providerObjectId}/stop`, {
+          body: { reason: "idle" },
+        });
+        assert.equal(stopped.status, 200);
+      }
+      const free = executor.store.freeSlots();
+      const res = await release(executor, "session-1");
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { released: 1, remaining: 0 });
+      assert.equal(executor.store.freeSlots(), free + 1);
+      // The other session still has its workspace, and a repeat finds nothing to do.
+      assert.equal(executor.store.expiredRetained(NOW + 100 * 86_400_000).length, 1);
+      assert.deepEqual(await (await release(executor, "session-1")).json(), {
+        released: 0,
+        remaining: 0,
+      });
+    });
+  });
+
+  it("leaves a workspace a running sandbox holds and reports it remaining", async () => {
+    await withExecutor(async (executor) => {
+      await createSandbox(executor);
+      const res = await release(executor, "session-1");
+      assert.equal(res.status, 200);
+      const counts = (await res.json()) as { released: number; remaining: number };
+      assert.equal(counts.released, 0);
+      assert.equal(executor.store.occupancy(), 1);
+    });
+  });
+});
+
 describe("restore of a session's retained workspace", () => {
   const stopFirst = async (executor: Executor) => {
     const providerObjectId = await createSandbox(executor);

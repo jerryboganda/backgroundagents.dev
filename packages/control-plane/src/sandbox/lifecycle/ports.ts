@@ -54,6 +54,8 @@ export interface SandboxReadiness {
 export interface SandboxCancellation {
   cancelSandbox(): Promise<void>;
   preserveForArchive(): Promise<void>;
+  /** Stops the sandbox without saving and discards the provider's saved workspace. Throws when either is not confirmed. */
+  destroyForDelete(): Promise<void>;
 }
 
 /** Transport attachment reports facts without granting ordinary command readiness. */

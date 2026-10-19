@@ -46,6 +46,7 @@ export interface SessionInternalRouteHandlers {
   budget: SessionInternalRouteHandler;
   archive: SessionInternalRouteHandler;
   unarchive: SessionInternalRouteHandler;
+  purge: SessionInternalRouteHandler;
   expireDraft: SessionInternalRouteHandler;
   verifySandboxToken: SessionInternalRouteHandler;
   openaiTokenRefresh: SessionInternalRouteHandler;
@@ -118,6 +119,7 @@ export function createSessionInternalRoutes(
     { method: "POST", path: SessionInternalPaths.budget, handler: handlers.budget },
     { method: "POST", path: SessionInternalPaths.archive, handler: handlers.archive },
     { method: "POST", path: SessionInternalPaths.unarchive, handler: handlers.unarchive },
+    { method: "POST", path: SessionInternalPaths.purge, handler: handlers.purge },
     { method: "POST", path: SessionInternalPaths.expireDraft, handler: handlers.expireDraft },
     {
       method: "POST",

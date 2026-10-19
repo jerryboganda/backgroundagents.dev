@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useState, useCallback, useEffect, useRef, type TouchEvent } from "react";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { archiveSession } from "@/lib/archive-session";
+import { deleteSession } from "@/lib/delete-session";
 import { pullRequestSummaryDisplay } from "@/lib/pr-summary";
 import { PullRequestStateIcon } from "@/components/pr-state-icon";
 import { formatRelativeTime } from "@/lib/time";
-import { MoreIcon, ArchiveIcon, BranchIcon, BoxIcon } from "@/components/ui/icons";
+import { MoreIcon, ArchiveIcon, TrashIcon, BranchIcon, BoxIcon } from "@/components/ui/icons";
 import { formatSessionRepositoriesLabel } from "@/lib/repo-label";
 import { useSessionRename } from "@/hooks/use-session-rename";
 import {
@@ -43,6 +45,7 @@ export function SessionListItem({
   onMarkLatestMessageRead: (sessionId: string) => Promise<void>;
 }) {
   const canManageLifecycle = session.capabilities?.canManageLifecycle ?? false;
+  const canDelete = session.capabilities?.canDelete === true;
   const canMarkRead = session.capabilities?.canRead === true && session.readState.unread;
   const timestamp = session.updatedAt || session.createdAt;
   const relativeTime = formatRelativeTime(timestamp);
@@ -63,6 +66,8 @@ export function SessionListItem({
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isMarkingLatestRead, setIsMarkingLatestRead] = useState(false);
   const [title, setTitle] = useState(displayTitle);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -105,6 +110,25 @@ export function SessionListItem({
     if (!canManageLifecycle) return;
     setIsActionsOpen(false);
     setShowArchiveDialog(true);
+  };
+
+  const handleStartDelete = () => {
+    if (!canDelete) return;
+    setIsActionsOpen(false);
+    setShowDeleteDialog(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    setShowDeleteDialog(false);
+    setIsDeleting(true);
+
+    try {
+      const didDelete = await deleteSession(session.id);
+      // The row leaves the list the same way an archived one does.
+      if (didDelete) await onArchive(session.id);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleMarkLatestMessageRead = async () => {
@@ -311,7 +335,7 @@ export function SessionListItem({
           </Link>
         )}
 
-        {(canManageLifecycle || canMarkRead) && (
+        {(canManageLifecycle || canMarkRead || canDelete) && (
           <div className="absolute inset-y-0 right-2 flex items-center">
             <DropdownMenu open={isActionsOpen} onOpenChange={setIsActionsOpen}>
               <DropdownMenuTrigger asChild>
@@ -357,6 +381,16 @@ export function SessionListItem({
                     Archive
                   </DropdownMenuItem>
                 )}
+                {canDelete && (
+                  <DropdownMenuItem
+                    onClick={handleStartDelete}
+                    disabled={isDeleting}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                    Delete
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -368,6 +402,13 @@ export function SessionListItem({
           open={showArchiveDialog}
           onOpenChange={setShowArchiveDialog}
           onConfirm={handleConfirmArchive}
+        />
+      )}
+      {canDelete && (
+        <DeleteSessionDialog
+          open={showDeleteDialog}
+          onOpenChange={setShowDeleteDialog}
+          onConfirm={handleConfirmDelete}
         />
       )}
     </>

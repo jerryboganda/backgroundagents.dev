@@ -566,6 +566,52 @@ describe("final graceful shutdown lifecycle integration", () => {
     expect(f.shutdown.requestShutdown).toHaveBeenCalledExactlyOnceWith("session_archived");
   });
 
+  it("destroys a deleted session's running sandbox and discards its saved workspace", async () => {
+    const releaseSessionWorkspaces = vi.fn(async () => ({ remaining: 0 }));
+    const stopSandbox = vi.fn(async () => ({ success: true as const }));
+    const f = fixture(
+      createMockProvider({
+        capabilities: { supportsExplicitStop: true },
+        stopSandbox,
+        releaseSessionWorkspaces,
+      }),
+      createMockSandbox({ status: "ready" })
+    );
+    await f.manager.destroyForDelete();
+    expect(stopSandbox).toHaveBeenCalledWith(expect.objectContaining({ intent: "destroy" }));
+    expect(releaseSessionWorkspaces).toHaveBeenCalledOnce();
+    expect(stopSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      releaseSessionWorkspaces.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("still discards the saved workspace of a session whose sandbox already stopped, without a provider stop", async () => {
+    const releaseSessionWorkspaces = vi.fn(async () => ({ remaining: 0 }));
+    const stopSandbox = vi.fn(async () => ({ success: true as const }));
+    const f = fixture(
+      createMockProvider({
+        capabilities: { supportsExplicitStop: true },
+        stopSandbox,
+        releaseSessionWorkspaces,
+      }),
+      createMockSandbox({ status: "stopped" })
+    );
+    await f.manager.destroyForDelete();
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(releaseSessionWorkspaces).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to finish a delete while the provider still holds a workspace for the session", async () => {
+    const f = fixture(
+      createMockProvider({
+        capabilities: { supportsExplicitStop: true },
+        releaseSessionWorkspaces: vi.fn(async () => ({ remaining: 1 })),
+      }),
+      createMockSandbox({ status: "stopped" })
+    );
+    await expect(f.manager.destroyForDelete()).rejects.toThrow(/still holds a saved workspace/);
+  });
+
   it("keeps a sandbox whose snapshots stop it running after a finished turn", async () => {
     const sandbox = createMockSandbox({ status: "ready" });
     const f = fixture(

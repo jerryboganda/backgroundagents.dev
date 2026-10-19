@@ -1,6 +1,7 @@
 import { settingsProxy } from "@/lib/settings-proxy";
 
-export const { GET } = settingsProxy(
+export const { GET, DELETE } = settingsProxy(
   ({ id }: { id: string }) => `/sessions/${encodeURIComponent(id)}`,
-  "session snapshot"
+  "session snapshot",
+  { DELETE: "delete session" }
 );

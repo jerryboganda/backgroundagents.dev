@@ -12,6 +12,7 @@ expect.extend(matchers);
 const mocks = vi.hoisted(() => ({
   allowedPermissions: new Set<string>(),
   canManageLifecycle: false,
+  canDelete: false,
 }));
 
 vi.mock("next/link", () => ({
@@ -31,6 +32,7 @@ vi.mock("@/hooks/use-current-user-authorization", () => ({
 beforeEach(() => {
   mocks.allowedPermissions = new Set();
   mocks.canManageLifecycle = false;
+  mocks.canDelete = false;
 });
 
 function session(unread = false): SessionItem {
@@ -50,7 +52,7 @@ function session(unread = false): SessionItem {
       canRead: true,
       canCollaborate: false,
       canManageLifecycle: mocks.canManageLifecycle,
-      canDelete: false,
+      canDelete: mocks.canDelete,
       canSandbox: false,
       canManageCollaborators: false,
       canChangeVisibility: false,
@@ -91,6 +93,34 @@ it("shows rename and archive actions when the server allows lifecycle management
 
   expect(await screen.findByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+});
+
+it("offers Delete only when the server grants it, and asks before deleting", async () => {
+  mocks.canDelete = true;
+  renderItem();
+
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Session actions" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  expect(await screen.findByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+  expect(await screen.findByText(/This cannot be undone/)).toBeInTheDocument();
+});
+
+it("hides Delete when the server does not grant it", async () => {
+  mocks.canManageLifecycle = true;
+  renderItem();
+
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Session actions" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+
+  expect(await screen.findByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
 });
 
 it("keeps mark-as-read available without sessions.lifecycle", async () => {

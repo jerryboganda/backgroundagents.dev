@@ -158,6 +158,9 @@ export function createExecutorServer(options: ExecutorServerOptions): ExecutorSe
     if (method === "POST" && stopMatch) return stopSandbox(req, res, stopMatch[1]);
     const releaseMatch = /^\/v1\/sandboxes\/([^/]+)\/release$/.exec(pathname);
     if (method === "POST" && releaseMatch) return releaseSandbox(req, res, releaseMatch[1]);
+    const sessionReleaseMatch = /^\/v1\/sessions\/([^/]+)\/release-workspaces$/.exec(pathname);
+    if (method === "POST" && sessionReleaseMatch)
+      return releaseSessionWorkspaces(req, res, decodeURIComponent(sessionReleaseMatch[1]));
     const closeMatch = /^\/v1\/sandboxes\/([^/]+)\/admission\/close$/.exec(pathname);
     if (method === "POST" && closeMatch) return closeAdmission(req, res, closeMatch[1]);
     const abandonMatch = /^\/v1\/sandboxes\/([^/]+)\/abandon$/.exec(pathname);
@@ -715,6 +718,35 @@ export function createExecutorServer(options: ExecutorServerOptions): ExecutorSe
     if (start.kind === "refused") return sendJson(res, 409, { error: "release_refused" });
     if (start.kind === "active") return sendJson(res, 409, { error: "workspace_active" });
     return clearWorkspace(res, sandboxId, start.workspaceSlot);
+  }
+
+  /**
+   * Releases every workspace a deleted session still has retained, so its data is gone and its slots are free. A
+   * workspace a running container still names is left (the caller stops the sandbox first) and counted in
+   * `remaining`, as is one whose clear failed; repeating the call finishes it. Answers 200 with the counts.
+   */
+  async function releaseSessionWorkspaces(
+    req: IncomingMessage,
+    res: ServerResponse,
+    sessionId: string
+  ): Promise<void> {
+    if (sessionId.length === 0 || sessionId.length > MAX_TEXT_LENGTH)
+      return sendJson(res, 400, { error: "invalid_session_id" });
+    const body = await readJsonObject(req);
+    if (typeof body.reason !== "string" || body.reason.length > MAX_TEXT_LENGTH)
+      return sendJson(res, 400, { error: "invalid_reason" });
+    const result: WorkspaceSweepResult = { released: 0, failed: 0 };
+    let held: ReturnType<StateStore["evictableWorkspaces"]>;
+    try {
+      held = store.evictableWorkspaces(Number.MAX_SAFE_INTEGER).filter((w) => w.sessionId === sessionId);
+    } catch (error) {
+      reportError("could not list a session's workspaces", error);
+      return sendJson(res, 503, { error: "state_unavailable" });
+    }
+    for (const workspace of held)
+      await releaseWorkspace(workspace, workspace, result, "its session was deleted");
+    const remaining = held.length - result.released;
+    return sendJson(res, 200, { released: result.released, remaining });
   }
 
   /**
