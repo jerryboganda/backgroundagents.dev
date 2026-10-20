@@ -208,7 +208,6 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     );
   });
 
-
   it("spawns a child on Claude Agent with its own provider account", async () => {
     const store = makeStore();
     vi.mocked(SessionIndexStore).mockImplementation(function () {
@@ -227,10 +226,10 @@ describe("handleSpawnChild prompt enqueue handling", () => {
 
     expect(response.status).toBe(201);
     expect(store.getCompleteProviderAuth).not.toHaveBeenCalled();
-    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(
-      expect.anything(),
-      { harness: "claude", unattended: true }
-    );
+    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(expect.anything(), {
+      harness: "claude",
+      unattended: true,
+    });
     expect(store.create).toHaveBeenCalledWith(
       expect.objectContaining({
         harness: "claude",
@@ -274,10 +273,10 @@ describe("handleSpawnChild prompt enqueue handling", () => {
         reasoningEffort: "low",
       })
     );
-    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(
-      expect.anything(),
-      { harness: "codex", unattended: true }
-    );
+    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(expect.anything(), {
+      harness: "codex",
+      unattended: true,
+    });
   });
 
   it("refuses a Codex child on an unqualified sandbox provider", async () => {

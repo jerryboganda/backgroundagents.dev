@@ -200,7 +200,9 @@ export async function resolveChildHarnessSelection(
   // A different harness may have incompatible reasoning defaults. Inherit only
   // within the parent's harness, or use the explicitly requested child effort.
   const inheritedEffort =
-    model && !switchingHarness ? inheritReasoningEffort(harness, model, parent.reasoningEffort) : undefined;
+    model && !switchingHarness
+      ? inheritReasoningEffort(harness, model, parent.reasoningEffort)
+      : undefined;
   if (
     requested.reasoningEffort !== undefined &&
     model &&

@@ -254,10 +254,12 @@ export async function handleSpawnChild(
       // A different harness has its own credential policy. Resolve active
       // installation defaults for unattended delegation, not the parent's
       // potentially incompatible pinned authentication.
-      providerAuth = (await resolveSessionProviderAuth(ctx.db, {
-        harness,
-        unattended: true,
-      })).map((auth) =>
+      providerAuth = (
+        await resolveSessionProviderAuth(ctx.db, {
+          harness,
+          unattended: true,
+        })
+      ).map((auth) =>
         auth.authMode === "legacy_scoped_oauth"
           ? {
               provider: auth.provider,

@@ -39,27 +39,16 @@ jobs:
         run: npm ci
       - name: Build shared contracts
         run: npm run build -w @open-inspect/shared
-      - name: Preview formatting patch for first review
-        run: |
-          npx prettier --write \
-            packages/shared/src/types/session-api.ts \
-            packages/shared/src/types/boundary-schemas.test.ts \
-            packages/control-plane/src/harness-admission.ts \
-            packages/control-plane/src/harness-admission.test.ts \
-            packages/control-plane/src/routes/session-child-spawn.ts \
-            packages/control-plane/src/router.spawn-child.test.ts \
-            packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js
-          git diff --unified=3 -- \
-            packages/shared/src/types/session-api.ts \
-            packages/shared/src/types/boundary-schemas.test.ts \
-            packages/control-plane/src/harness-admission.ts \
-            packages/control-plane/src/harness-admission.test.ts \
-            packages/control-plane/src/routes/session-child-spawn.ts \
-            packages/control-plane/src/router.spawn-child.test.ts \
-            packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js > /tmp/prettier.patch
-          echo "PRETTIER_PATCH_BEGIN"
-          base64 -w0 /tmp/prettier.patch | fold -w 100
-          echo "PRETTIER_PATCH_END"
+      - name: Check changed TypeScript formatting
+        run: >-
+          npx prettier --check
+          packages/shared/src/types/session-api.ts
+          packages/shared/src/types/boundary-schemas.test.ts
+          packages/control-plane/src/harness-admission.ts
+          packages/control-plane/src/harness-admission.test.ts
+          packages/control-plane/src/routes/session-child-spawn.ts
+          packages/control-plane/src/router.spawn-child.test.ts
+          packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js
       - name: Typecheck control plane
         run: npm run typecheck -w @open-inspect/control-plane
       - name: Check shared contract tests
@@ -96,6 +85,3 @@ jobs:
           pytest -q
           packages/sandbox-runtime/tests/test_spawn_child_tool.py
           packages/sandbox-runtime/tests/test_tools.py
-      - name: Verify formatting is committed (temporary)
-        if: always()
-        run: git diff --exit-code -- packages/shared/src/types/session-api.ts packages/shared/src/types/boundary-schemas.test.ts packages/control-plane/src/harness-admission.ts packages/control-plane/src/harness-admission.test.ts packages/control-plane/src/routes/session-child-spawn.ts packages/control-plane/src/router.spawn-child.test.ts packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js

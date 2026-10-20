@@ -176,10 +176,12 @@ describe("boundary schemas", () => {
     it("accepts a child harness override and preserves omission", () => {
       const input = { title: "Review", prompt: "Review the PR", harness: "claude" };
       expect(spawnChildSessionRequestSchema.parse(input)).toEqual(input);
-      expect(spawnChildSessionRequestSchema.parse({
-        title: "Review",
-        prompt: "Review the PR",
-      })).not.toHaveProperty("harness");
+      expect(
+        spawnChildSessionRequestSchema.parse({
+          title: "Review",
+          prompt: "Review the PR",
+        })
+      ).not.toHaveProperty("harness");
     });
 
     it("rejects unknown child harness identifiers", () => {
