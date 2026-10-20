@@ -1399,6 +1399,22 @@ describe("boundary schemas", () => {
   });
 
   describe("spawnChildSessionRequestSchema", () => {
+    it("accepts configured child roles and rejects unknown roles", () => {
+      const valid = spawnChildSessionRequestSchema.safeParse({
+        title: "Analyze",
+        prompt: "Explore the repository",
+        role: "explorer",
+        harness: "opencode",
+      });
+      expect(valid.success).toBe(true);
+      const invalid = spawnChildSessionRequestSchema.safeParse({
+        title: "Escalate",
+        prompt: "Try to become administrator",
+        role: "administrator",
+      });
+      expect(invalid.success).toBe(false);
+    });
+
     it("parses a valid child session request", () => {
       const result = spawnChildSessionRequestSchema.safeParse({
         title: "Investigate failure",
