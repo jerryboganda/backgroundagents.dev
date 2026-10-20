@@ -127,9 +127,18 @@ for (const workflow of workflows) {
   });
 }
 
-test("the SSH setup writes the key with owner-only permissions and removes it", () => {
+test("the SSH setup writes the key with owner-only permissions", () => {
   assert.match(action, /chmod 600 "\$dir\/id_ed25519"/);
-  assert.match(action, /rm -f "\$RUNNER_TEMP\/polytronx-ssh\/id_ed25519"/);
+});
+
+test("each deployment removes the key when the job ends", () => {
+  // The key must live through the whole job, and go before the runner is reused.
+  for (const workflow of workflows) {
+    assert.match(workflow.text, /rm -f "\$RUNNER_TEMP\/polytronx-ssh\/id_ed25519"/);
+  }
+  // The action itself must not remove it: that would delete the key before the
+  // workflow's first connection.
+  assert.doesNotMatch(action, /rm -f "\$RUNNER_TEMP\/polytronx-ssh\/id_ed25519"/);
 });
 
 test("the SSH setup keeps the host key check on and the key alone", () => {

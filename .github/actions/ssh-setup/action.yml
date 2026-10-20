@@ -142,9 +142,3 @@ runs:
         chmod 600 "$dir/config"
         echo "path=$dir/config" >>"$GITHUB_OUTPUT"
         echo "SSH_CONFIG=$dir/config" >>"$GITHUB_ENV"
-
-    - name: Remove the private key
-      if: always()
-      shell: bash
-      run: |
-        rm -f "$RUNNER_TEMP/polytronx-ssh/id_ed25519"

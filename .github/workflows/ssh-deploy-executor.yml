@@ -133,3 +133,7 @@ jobs:
             ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
               "rm -rf '$STAGED'" || true
           fi
+
+      - name: Remove the deployment key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/polytronx-ssh/id_ed25519"
