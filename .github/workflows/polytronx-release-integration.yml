@@ -1,0 +1,32 @@
+# CI-only integrated release candidate proof.
+# Uses the pinned release builder without deploying, publishing, or contacting a VPS.
+name: PolytronX integrated release candidate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/polytronx-release-integration.yml"
+      - ".github/workflows/polytronx-openinspect.yml"
+      - "deploy/polytronx/**"
+      - "packages/control-plane/**"
+      - "packages/vps-executor/**"
+      - "packages/sandbox-runtime/**"
+      - "packages/shared/**"
+      - "packages/web/**"
+      - "scripts/ship-executor.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polytronx-integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-combined-release:
+    # Only trusted same-repository integration branches may invoke the pinned
+    # full release builder; no fork has access to an untrusted privileged context.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'integration/') }}
+    uses: ./.github/workflows/polytronx-openinspect.yml
+    permissions:
+      contents: read

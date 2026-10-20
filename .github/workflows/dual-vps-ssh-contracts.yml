@@ -1,0 +1,31 @@
+name: Dual VPS SSH readiness contracts
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/dashboard-ssh-readiness.yml"
+      - ".github/workflows/executor-ssh-readiness.yml"
+      - ".github/workflows/dual-vps-ssh-contracts.yml"
+      - ".github/workflows/polytronx-openinspect.yml"
+      - "deploy/polytronx/ssh-readiness.sh"
+      - "deploy/polytronx/ssh-readiness.test.mjs"
+      - "deploy/polytronx/runbooks/ssh-access.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ssh-guard:
+    name: Verify read-only SSH boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout contracts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check shell syntax
+        run: bash -n deploy/polytronx/ssh-readiness.sh
+      - name: Test valid, invalid and untrusted-host cases
+        run: node --test deploy/polytronx/ssh-readiness.test.mjs

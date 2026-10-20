@@ -1,4 +1,7 @@
 import { HarnessAdmissionError, resolveChildHarnessSelection } from "../harness-admission";
+import { AgentRoleProfileError, resolveChildRoleProfile } from "../agent-role-profiles";
+import { ProviderAccountSelectionPolicyError } from "../model-provider-accounts/selection-policy";
+import { resolveSessionProviderAuth } from "../session/provider-account-resolution";
 import { checkHarnessCompatibility } from "@open-inspect/shared/harnesses";
 import { parseBody } from "./body";
 import { Hono } from "hono";
@@ -223,17 +226,38 @@ export async function handleSpawnChild(
     });
     return error("Model preferences unavailable", 503);
   }
-  if (body.model !== undefined && !isValidModel(body.model)) {
-    return error(`Invalid model "${body.model}". Valid models: ${VALID_MODELS.join(", ")}`, 400);
+  let routedChild;
+  try {
+    routedChild = resolveChildRoleProfile(env, {
+      role: body.role,
+      harness: body.harness,
+      model: body.model,
+      reasoningEffort: body.reasoningEffort,
+    });
+  } catch (cause) {
+    if (cause instanceof AgentRoleProfileError) return error(cause.message, cause.status);
+    throw cause;
   }
-  const requestedModel = getValidModelOrDefault(body.model ?? spawnContext.model);
-  if (body.model !== undefined && !enabledModels.includes(requestedModel)) {
-    return error(`Model "${body.model}" is not enabled`, 400);
+  if (routedChild.model !== undefined && !isValidModel(routedChild.model)) {
+    return error(
+      `Invalid model "${routedChild.model}". Valid models: ${VALID_MODELS.join(", ")}`,
+      400
+    );
   }
-  const harness = spawnContext.harness;
+  const requestedModel = getValidModelOrDefault(routedChild.model ?? spawnContext.model);
+  if (routedChild.model !== undefined && !enabledModels.includes(requestedModel)) {
+    return error(`Model "${routedChild.model}" is not enabled`, 400);
+  }
+  const harness = routedChild.harness ?? spawnContext.harness;
   let selection;
   try {
-    selection = await resolveChildHarnessSelection(ctx.db, env, spawnContext, body, enabledModels);
+    selection = await resolveChildHarnessSelection(
+      ctx.db,
+      env,
+      spawnContext,
+      routedChild,
+      enabledModels
+    );
   } catch (cause) {
     if (cause instanceof HarnessAdmissionError) return error(cause.message, cause.status);
     throw cause;
@@ -242,19 +266,50 @@ export async function handleSpawnChild(
 
   let providerAuth;
   try {
-    providerAuth = await sessionStore.getCompleteProviderAuth(parentId);
+    if (harness === spawnContext.harness) {
+      // Existing children keep their parent's exact pinned provider accounts.
+      providerAuth = (await sessionStore.getCompleteProviderAuth(parentId)).map((auth) => ({
+        ...auth,
+        inheritedFromSessionId: parentId,
+      }));
+    } else {
+      // A different harness has its own credential policy. Resolve active
+      // installation defaults for unattended delegation, not the parent's
+      // potentially incompatible pinned authentication.
+      providerAuth = (
+        await resolveSessionProviderAuth(ctx.db, {
+          harness,
+          unattended: true,
+        })
+      ).map((auth) =>
+        auth.authMode === "legacy_scoped_oauth"
+          ? {
+              provider: auth.provider,
+              authMode: "api_key" as const,
+              selectionSource: "cross_harness_api_key_fallback",
+            }
+          : auth
+      );
+    }
   } catch (cause) {
-    logger.error("Failed to load parent provider auth", {
+    if (cause instanceof ProviderAccountSelectionPolicyError) {
+      return error(cause.message, cause.status);
+    }
+    logger.error("Failed to resolve child provider auth", {
       event: "session.spawn_child_provider_auth_failed",
       parent_id: parentId,
+      harness,
       error: cause instanceof Error ? cause.message : String(cause),
       trace_id: ctx.trace_id,
       request_id: ctx.request_id,
     });
-    return error("Parent provider auth unavailable", 503);
+    return error(
+      harness === spawnContext.harness
+        ? "Parent provider auth unavailable"
+        : "Child provider auth unavailable",
+      503
+    );
   }
-  // The child inherits the parent's auth modes but may run a different model,
-  // so the auth half of the harness rule is checked against the child's model.
   const harnessAuthIncompatibility = checkHarnessCompatibility(
     harness,
     model,
@@ -262,6 +317,7 @@ export async function handleSpawnChild(
   );
   if (harnessAuthIncompatibility) return error(harnessAuthIncompatibility.message, 400);
 
+  const childTitle = body.role ? `[${body.role}] ${body.title}` : body.title;
   const childDepth = parentDepth + 1;
   const childId = generateId();
 
@@ -270,6 +326,8 @@ export async function handleSpawnChild(
     parent_id: parentId,
     child_id: childId,
     child_depth: childDepth,
+    role: body.role ?? null,
+    harness,
     model,
   });
 
@@ -298,7 +356,7 @@ export async function handleSpawnChild(
       spawnContext.repoOwner && spawnContext.repoName
         ? (spawnContext.baseBranch ?? DEFAULT_BASE_BRANCH)
         : null,
-    title: body.title,
+    title: childTitle,
     harness,
     model,
     reasoningEffort,
@@ -320,10 +378,7 @@ export async function handleSpawnChild(
     automationRunId: parentSession?.automationRunId ?? null,
     managedSkills: inheritedPin(parentId),
     memory: inheritedPin(parentId),
-    providerAuth: providerAuth.map((auth) => ({
-      ...auth,
-      inheritedFromSessionId: parentId,
-    })),
+    providerAuth,
   };
 
   const admissionLease = await sessionStore.acquireChildAdmissionLease(
@@ -399,7 +454,7 @@ export async function handleSpawnChild(
           body: JSON.stringify({
             childSessionId: childId,
             status: "created",
-            title: body.title,
+            title: childTitle,
           }),
         })
         .catch((err: unknown) => {

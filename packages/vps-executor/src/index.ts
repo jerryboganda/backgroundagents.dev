@@ -11,7 +11,7 @@ const MIN_ADMISSION_SECRET_LENGTH = 32;
 const RECONCILE_INTERVAL_MS = 30_000;
 /** How often retained workspaces past their retention are released. Their age is counted in days, so minutes are enough. */
 const RELEASE_INTERVAL_MS = 300_000;
-/** A stopped session keeps its workspace three days for a follow-up prompt. The host has six slots, so it cannot be forever. */
+/** A stopped session keeps its workspace three days for a follow-up prompt; workspace capacity is bounded. */
 const DEFAULT_RETAINED_WORKSPACE_TTL_MS = 259_200_000;
 
 export interface ExecutorConfig {

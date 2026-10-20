@@ -1,0 +1,98 @@
+name: Cross-harness child delegation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cross-harness-child-ci.yml"
+      - "packages/shared/src/types/session-api.ts"
+      - "packages/shared/src/types/boundary-schemas.test.ts"
+      - "packages/control-plane/src/harness-admission.ts"
+      - "packages/control-plane/src/agent-role-profiles.ts"
+      - "packages/control-plane/src/agent-role-profiles.test.ts"
+      - "packages/control-plane/src/node/config.ts"
+      - "packages/control-plane/src/types.ts"
+      - "docs/AGENT_ROLES.md"
+      - "packages/control-plane/src/harness-admission.test.ts"
+      - "packages/control-plane/src/routes/session-child-spawn.ts"
+      - "packages/control-plane/src/router.spawn-child.test.ts"
+      - "packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js"
+      - "packages/sandbox-runtime/src/sandbox_runtime/harness/tools.py"
+      - "packages/sandbox-runtime/tests/test_spawn_child_tool.py"
+      - "packages/sandbox-runtime/tests/test_tools.py"
+      - "packages/docs/content/docs/sessions/child-sessions.mdx"
+      - "packages/docs/content/docs/models/agent-harnesses.mdx"
+      - "docs/HOW_IT_WORKS.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript contracts and child routes
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build shared contracts
+        run: npm run build -w @open-inspect/shared
+      - name: Check changed TypeScript formatting
+        run: >-
+          npx prettier --check
+          packages/shared/src/types/session-api.ts
+          packages/shared/src/types/boundary-schemas.test.ts
+          packages/control-plane/src/harness-admission.ts
+          packages/control-plane/src/harness-admission.test.ts
+          packages/control-plane/src/agent-role-profiles.ts
+          packages/control-plane/src/agent-role-profiles.test.ts
+          packages/control-plane/src/node/config.ts
+          packages/control-plane/src/types.ts
+          packages/control-plane/src/routes/session-child-spawn.ts
+          packages/control-plane/src/router.spawn-child.test.ts
+          packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js
+      - name: Typecheck control plane
+        run: npm run typecheck -w @open-inspect/control-plane
+      - name: Check shared contract tests
+        run: npm run test -w @open-inspect/shared -- src/types/boundary-schemas.test.ts
+      - name: Check child-session admission and route tests
+        run: >-
+          npm run test -w @open-inspect/control-plane --
+          src/harness-admission.test.ts
+          src/agent-role-profiles.test.ts
+          src/router.spawn-child.test.ts
+
+
+  python:
+    name: Native harness tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.7"
+      - name: Check native tool lint and formatting
+        run: >-
+          uv run --frozen --project packages/sandbox-runtime --extra dev
+          ruff check packages/sandbox-runtime/src/sandbox_runtime/harness/tools.py
+          packages/sandbox-runtime/tests/test_spawn_child_tool.py
+          packages/sandbox-runtime/tests/test_tools.py
+      - name: Check native child tool tests
+        run: >-
+          uv run --frozen --project packages/sandbox-runtime --extra dev
+          pytest -q
+          packages/sandbox-runtime/tests/test_spawn_child_tool.py
+          packages/sandbox-runtime/tests/test_tools.py

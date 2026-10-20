@@ -119,8 +119,16 @@ set_release_value() { # $1 key, $2 value, $3 file
 }
 
 # The workspace slots are the bounded storage behind every sandbox's /workspace. They are
-# provisioned once per host; the check reads them.
+# provisioned once per host; the check reads them. The count comes from the release file,
+# so the provisioned slots and the executor agree on it: the value is read as a literal,
+# never sourced or evaluated.
 ensure_workspace_slots() {
+  local slot_count
+  slot_count="$(sed -n 's/^EXECUTOR_WORKSPACE_SLOTS=//p' "$RELEASE_FILE" | head -n 1)"
+  if [ -n "$slot_count" ]; then
+    export EXECUTOR_WORKSPACE_SLOTS="$slot_count"
+    info "the release file asks for $slot_count workspace slots"
+  fi
   if bash "$DEPLOY_DIR/workspace-slots.sh" --check >/dev/null 2>&1; then
     info "the workspace slots are provisioned"
     return 0

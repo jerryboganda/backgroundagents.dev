@@ -35,7 +35,8 @@ def _tool_module(tmp_path: Path) -> Path:
         " describe(description) { this.description = description; return this; },"
         " optional() { this.isOptional = true; return this; }"
         "};"
-        "export const z = { string() { return Object.create(schema); } };"
+        "export const z = { string() { return Object.create(schema); },"
+        " enum() { return Object.create(schema); } };"
     )
 
     (tmp_path / "_bridge-client.js").write_text(
@@ -105,4 +106,27 @@ def test_omits_reasoning_effort_to_inherit_parent_setting(tmp_path: Path) -> Non
     assert json.loads(result["request"]["options"]["body"]) == {
         "title": "Child task",
         "prompt": "Do the thing",
+    }
+
+def test_serializes_operator_profile_role(tmp_path: Path) -> None:
+    result = _run_tool(
+        tmp_path,
+        {"title": "Review", "prompt": "Check security", "role": "reviewer"},
+    )
+    assert json.loads(result["request"]["options"]["body"]) == {
+        "title": "Review",
+        "prompt": "Check security",
+        "role": "reviewer",
+    }
+
+
+def test_serializes_explicit_child_harness(tmp_path: Path) -> None:
+    result = _run_tool(
+        tmp_path,
+        {"title": "Reviewer", "prompt": "Review the pull request", "harness": "claude"},
+    )
+    assert json.loads(result["request"]["options"]["body"]) == {
+        "title": "Reviewer",
+        "prompt": "Review the pull request",
+        "harness": "claude",
     }

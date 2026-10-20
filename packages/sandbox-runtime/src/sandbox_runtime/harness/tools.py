@@ -251,6 +251,10 @@ class OpenInspectTools:
 
     async def spawn_child(self, args: Mapping[str, Any]) -> ToolResult:
         body: dict[str, Any] = {"title": args.get("title"), "prompt": args.get("prompt")}
+        if args.get("role") is not None:
+            body["role"] = args["role"]
+        if args.get("harness") is not None:
+            body["harness"] = args["harness"]
         if args.get("model"):
             body["model"] = args["model"]
         if args.get("reasoning") is not None:
@@ -705,6 +709,11 @@ def build_tools(client: ControlPlaneToolClient) -> list[ToolDefinition]:
             {
                 "type": "object",
                 "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": ["orchestrator", "explorer", "implementer", "reviewer", "ci"],
+                        "description": "Optional operator-configured role; the control plane selects the pinned harness and model. Conflicting overrides fail.",
+                    },
                     "title": {
                         "type": "string",
                         "description": "Short title describing the child session (shown in the UI).",
@@ -713,9 +722,14 @@ def build_tools(client: ControlPlaneToolClient) -> list[ToolDefinition]:
                         "type": "string",
                         "description": "Detailed instructions for the child agent. Be specific — the child has no context beyond what you provide here.",
                     },
+                    "harness": {
+                        "type": "string",
+                        "enum": ["opencode", "claude", "codex"],
+                        "description": "Override the child agent harness. Defaults to the parent's harness. Codex requires a Modal sandbox.",
+                    },
                     "model": {
                         "type": "string",
-                        "description": "Override the LLM model for the child, in 'provider/model' format. Defaults to the parent's model. The child runs on the parent's harness, so only models that harness supports are accepted.",
+                        "description": "Override the LLM model for the child, in 'provider/model' format. When the harness changes, the default becomes a compatible enabled model.",
                     },
                     "reasoning": {
                         "type": "string",

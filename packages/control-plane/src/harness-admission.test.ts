@@ -90,6 +90,57 @@ describe("consolidated selection boundaries", () => {
       )
     ).resolves.toEqual({ model: "openai/gpt-5.4", reasoningEffort: null });
   });
+  it("chooses a compatible default when switching from OpenCode to Codex", async () => {
+    await expect(
+      resolveChildHarnessSelection(
+        db,
+        {},
+        { harness: "opencode", model: DEFAULT_MODEL, reasoningEffort: "max" },
+        { harness: "codex" },
+        [DEFAULT_MODEL, "openai/gpt-6.1-sol"]
+      )
+    ).resolves.toEqual({ model: "openai/gpt-6.1-sol", reasoningEffort: "low" });
+  });
+
+  it("does not inherit a different harness's reasoning effort", async () => {
+    await expect(
+      resolveChildHarnessSelection(
+        db,
+        {},
+        { harness: "opencode", model: "openai/gpt-5.4", reasoningEffort: "max" },
+        { harness: "claude" },
+        ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6"]
+      )
+    ).resolves.toEqual({
+      model: "anthropic/claude-sonnet-4-6",
+      reasoningEffort: null,
+    });
+  });
+
+  it("rejects an incompatible explicit child model on a different harness", async () => {
+    await expect(
+      resolveChildHarnessSelection(
+        db,
+        {},
+        { harness: "opencode", model: DEFAULT_MODEL, reasoningEffort: null },
+        { harness: "claude", model: "openai/gpt-5.4" },
+        [DEFAULT_MODEL, "openai/gpt-5.4"]
+      )
+    ).rejects.toThrow("cannot run on the Claude Agent harness");
+  });
+
+  it("refuses a cross-harness child with no enabled compatible model", async () => {
+    await expect(
+      resolveChildHarnessSelection(
+        db,
+        {},
+        { harness: "opencode", model: DEFAULT_MODEL, reasoningEffort: null },
+        { harness: "codex" },
+        [DEFAULT_MODEL]
+      )
+    ).rejects.toThrow("No qualified Codex model is enabled");
+  });
+
   it("reuses the loaded catalog for native child model and effort inheritance", async () => {
     getEnabledModels.mockRejectedValue(new Error("must not reread the catalog"));
     await expect(

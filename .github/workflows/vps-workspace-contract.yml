@@ -1,0 +1,58 @@
+name: VPS workspace capacity contracts
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vps-workspace-contract.yml"
+      - ".github/workflows/polytronx-openinspect.yml"
+      - "deploy/polytronx/workspace-slots.sh"
+      - "deploy/polytronx/workspace-slots.test.mjs"
+      - "deploy/polytronx/compose.executor.yml"
+      - "deploy/polytronx/preflight-executor.sh"
+      - "deploy/polytronx/runbooks/executor-host.md"
+      - "deploy/polytronx/runbooks/executor-deployment.md"
+      - "scripts/ship-executor.sh"
+      - "packages/vps-executor/src/index.ts"
+      - "packages/vps-executor/src/workspace.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provisioning:
+    name: Provisioning and fail-closed contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Check shell syntax without touching a host
+        run: bash -n deploy/polytronx/workspace-slots.sh deploy/polytronx/preflight-executor.sh scripts/ship-executor.sh
+      - name: Test bounded workspace provisioning on a scratch host
+        run: node --test deploy/polytronx/workspace-slots.test.mjs
+
+  executor:
+    name: Executor configuration and state regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install reproducible dependencies
+        run: npm ci
+      - name: Build shared contracts
+        run: npm run build -w @open-inspect/shared
+      - name: Typecheck VPS executor
+        run: npm run typecheck -w @open-inspect/vps-executor
+      - name: Test VPS executor configuration, state and sandbox lifecycle
+        run: npm test -w @open-inspect/vps-executor

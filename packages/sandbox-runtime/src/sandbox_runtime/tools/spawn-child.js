@@ -13,6 +13,18 @@ export default tool({
   description:
     "Use this tool ONLY when the user's current request explicitly and affirmatively asks to create a 'child session' or 'child sessions' in a separate sandbox. DO NOT use it for 'sub-agent', 'subagent', 'sub agent', 'sub-task', 'subtask', or Task tool requests; use the Task tool for those in-process delegations instead. Merely mentioning, comparing, or rejecting child sessions does not authorize this tool. Never infer permission or suggest creating a child session. The child inherits the repository, not conversation context, and continues running after the parent responds. Returns a child ID; check status only when its result is needed.",
   args: {
+    harness: z
+      .enum(["opencode", "claude", "codex"])
+      .optional()
+      .describe(
+        "Choose the child agent harness independently of the parent. Omit to inherit the parent's harness. Codex requires a Modal sandbox."
+      ),
+    role: z
+      .string()
+      .optional()
+      .describe(
+        "Optional operator-configured execution role: orchestrator, explorer, implementer, reviewer, or ci. When given, deployment policy chooses the harness and model; conflicting overrides fail."
+      ),
     title: z.string().describe("Short title describing the child session (shown in the UI)."),
     prompt: z
       .string()
@@ -35,6 +47,12 @@ export default tool({
   async execute(args) {
     try {
       const body = { title: args.title, prompt: args.prompt };
+      if (args.role !== undefined) {
+        body.role = args.role;
+      }
+      if (args.harness !== undefined) {
+        body.harness = args.harness;
+      }
       if (args.model) {
         body.model = args.model;
       }

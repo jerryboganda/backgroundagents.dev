@@ -51,10 +51,10 @@ services:
       # A stopped session keeps its workspace this long (default three days), then the executor releases it.
       VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: ${EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS:-259200}
       VPS_EXECUTOR_MIN_FREE_SLOTS: ${EXECUTOR_MIN_FREE_SLOTS:-2}
-      # Sixteen 10 GiB slots, provisioned by workspace-slots.sh. The count is fixed here, not a setting:
-      # the provisioned images and the executor must agree on it.
+      # 3-16 slots, default 16. Must match workspace-slots.sh provisioning on this host.
+      # Never lower the value on an existing host: retained workspaces must stay addressable.
       VPS_EXECUTOR_WORKSPACE_ROOT: /srv/vps-ws/slots
-      VPS_EXECUTOR_WORKSPACE_SLOTS: "16"
+      VPS_EXECUTOR_WORKSPACE_SLOTS: "${EXECUTOR_WORKSPACE_SLOTS:-16}"
     ports:
       - "127.0.0.1:8787:8787"
     volumes:

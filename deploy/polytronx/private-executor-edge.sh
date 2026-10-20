@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Private HTTPS ingress for the VPS executor. A host-run Caddy listens on 172.235.26.148:19443
-# and forwards to the executor on 127.0.0.1:8787. Only the dashboard host may connect: UFW
+# Private HTTPS ingress for the VPS executor. A host-run Caddy listens on the configured edge IPv4
+# address (default 172.235.26.148) at port 19443 and forwards to 127.0.0.1:8787. Only the
+# configured dashboard IPv4 (default 185.252.233.186) may connect: UFW
 # admits that source alone, and Caddy refuses any other remote address. Certificates come from
 # a private CA created on the host; its public part is the one the control plane trusts. The CA lives
 # in CA_DIR, outside the edge directory the proxy mounts and reads, so the proxy never sees its key.
@@ -18,6 +19,9 @@
 # executor host. The edge directory can be set with POLYTRONX_EDGE_DIR and the unit directory with
 # POLYTRONX_UNIT_DIR; the tests use them. A path with a quote, backslash, $, |, & or a mount point, or one
 # not written as its resolved form (a symlink, '.', '..', a repeated or trailing slash), is refused.
+# The two endpoints can be set per replacement VPS via POLYTRONX_EXECUTOR_EDGE_ADDRESS and
+# POLYTRONX_DASHBOARD_SOURCE_IPV4. Both must be unicast IPv4 host addresses; the existing
+# certificate cannot be silently reused for an endpoint change.
 #
 # Reboot: the unit is enabled by the operator (apply does not start it). It is ordered after
 # docker.service and polytronx-sandbox-network.service, so the sandbox rules are in place first.
@@ -26,9 +30,9 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-EDGE_ADDRESS="172.235.26.148"
+EDGE_ADDRESS="${POLYTRONX_EXECUTOR_EDGE_ADDRESS-172.235.26.148}"
 EDGE_PORT="19443"
-DASHBOARD_SOURCE="185.252.233.186"
+DASHBOARD_SOURCE="${POLYTRONX_DASHBOARD_SOURCE_IPV4-185.252.233.186}"
 UPSTREAM="127.0.0.1:8787"
 EDGE_DIR="${POLYTRONX_EDGE_DIR:-/etc/polytronx/edge}"
 CA_DIR="${POLYTRONX_EDGE_CA_DIR:-/etc/polytronx/edge-ca}"
@@ -51,6 +55,24 @@ CADDY_IMAGE=""
 
 usage() {
   grep '^#   ' "$0" | sed 's/^#   //' >&2
+}
+
+# Reject malformed, wildcard, loopback, multicast, link-local and reserved addresses.
+# No CIDR, hostnames, whitespace, leading-zero octets or shell metacharacters are admitted.
+valid_unicast_ipv4() {
+  local address="$1" octet first second
+  local -a parts
+  [[ "$address" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  IFS=. read -r -a parts <<<"$address"
+  [ "${#parts[@]}" -eq 4 ] || return 1
+  for octet in "${parts[@]}"; do
+    if [ "${#octet}" -gt 1 ] && [[ "$octet" == 0* ]]; then return 1; fi
+    (( 10#$octet <= 255 )) || return 1
+  done
+  first=$((10#${parts[0]}))
+  second=$((10#${parts[1]}))
+  (( first >= 1 && first <= 223 && first != 127 )) || return 1
+  (( first != 169 || second != 254 )) || return 1
 }
 
 pass() { printf 'PASS  %s\n' "$*"; }
@@ -440,6 +462,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$PROXY_MODE" = binary ] || [ "$PROXY_MODE" = container ] || die "--proxy must be binary or container"
+
+valid_unicast_ipv4 "$EDGE_ADDRESS" || die "POLYTRONX_EXECUTOR_EDGE_ADDRESS must be a unicast IPv4 host address"
+valid_unicast_ipv4 "$DASHBOARD_SOURCE" || die "POLYTRONX_DASHBOARD_SOURCE_IPV4 must be a unicast IPv4 host address"
 
 case "$COMMAND" in
   render)

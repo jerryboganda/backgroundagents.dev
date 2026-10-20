@@ -16,6 +16,7 @@ import { TeamStore } from "./db/teams";
 import { resolveRepoOrError } from "./routes/shared";
 import type * as SharedRoutes from "./routes/shared";
 import { SessionInternalPaths } from "./session/contracts";
+import { resolveSessionProviderAuth } from "./session/provider-account-resolution";
 
 const modelPreferenceMocks = vi.hoisted(() => ({ getEnabledModels: vi.fn() }));
 
@@ -51,6 +52,10 @@ vi.mock("./db/user-store", () => ({
 }));
 
 vi.mock("./session/integration-settings-resolution", () => integrationSettingsMocks);
+
+vi.mock("./session/provider-account-resolution", () => ({
+  resolveSessionProviderAuth: vi.fn(),
+}));
 
 vi.mock("./routes/shared", async (importOriginal) => {
   const actual = await importOriginal<typeof SharedRoutes>();
@@ -154,6 +159,16 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     );
     environmentMocks.getById.mockResolvedValue({ id: "env_parent", owner_team_id: null });
     vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["anthropic/claude-sonnet-4-6"]);
+    vi.mocked(resolveSessionProviderAuth).mockResolvedValue([
+      { provider: "openai", authMode: "api_key", selectionSource: "unattended_policy" },
+      { provider: "xai", authMode: "api_key", selectionSource: "harness_fallback" },
+      {
+        provider: "anthropic",
+        authMode: "provider_account",
+        providerAccountId: "3".repeat(32),
+        selectionSource: "installation_default",
+      },
+    ]);
     integrationSettingsMocks.resolveCodeServerEnabled.mockResolvedValue(false);
     integrationSettingsMocks.resolveVncEnabled.mockResolvedValue(false);
     integrationSettingsMocks.resolveSandboxSettings.mockResolvedValue({});
@@ -171,6 +186,7 @@ describe("handleSpawnChild prompt enqueue handling", () => {
 
     expect(response.status).toBe(201);
     expect(store.getCompleteProviderAuth).toHaveBeenCalledWith(parentId);
+    expect(resolveSessionProviderAuth).not.toHaveBeenCalled();
     expect(store.create).toHaveBeenCalledWith(
       expect.objectContaining({
         providerAuth: [
@@ -190,6 +206,235 @@ describe("handleSpawnChild prompt enqueue handling", () => {
         ],
       })
     );
+  });
+
+  it("routes the reviewer role to its independently configured harness and model", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env, childStub } = makeSuccessfulEnv(spawnContext);
+    const roleEnv = {
+      ...env,
+      AGENT_ROLE_PROFILES: JSON.stringify({
+        reviewer: { harness: "claude", model: "anthropic/claude-sonnet-4-6" },
+      }),
+    };
+    const response = await makeRequest(roleEnv, {
+      title: "Check the implementation",
+      prompt: "Review the code",
+      role: "reviewer",
+    });
+
+    expect(response.status).toBe(201);
+    expect(store.getCompleteProviderAuth).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(expect.anything(), {
+      harness: "claude",
+      unattended: true,
+    });
+    expect(store.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "[reviewer] Check the implementation",
+        harness: "claude",
+        model: "anthropic/claude-sonnet-4-6",
+      })
+    );
+    await expect(getInitBody(childStub)).resolves.toMatchObject({
+      title: "[reviewer] Check the implementation",
+      harness: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+    });
+  });
+
+  it("rejects an agent role override conflicting with the operator policy", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(
+      {
+        ...env,
+        AGENT_ROLE_PROFILES: JSON.stringify({
+          reviewer: { harness: "claude", model: "anthropic/claude-sonnet-4-6" },
+        }),
+      },
+      {
+        title: "Unsafe override",
+        prompt: "Review the code",
+        role: "reviewer",
+        harness: "codex",
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("conflicting overrides"),
+    });
+    expect(store.create).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).not.toHaveBeenCalled();
+  });
+
+  it("rejects unconfigured agent roles instead of silently using the parent", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(env, {
+      title: "Check the implementation",
+      prompt: "Review the code",
+      role: "reviewer",
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Configure AGENT_ROLE_PROFILES"),
+    });
+    expect(store.create).not.toHaveBeenCalled();
+  });
+
+  it("spawns a child on Claude Agent with its own provider account", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env, childStub } = makeSuccessfulEnv({
+      ...spawnContext,
+      reasoningEffort: "max",
+    });
+
+    const response = await makeRequest(env, {
+      title: "Review implementation",
+      prompt: "Review the changes",
+      harness: "claude",
+    });
+
+    expect(response.status).toBe(201);
+    expect(store.getCompleteProviderAuth).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(expect.anything(), {
+      harness: "claude",
+      unattended: true,
+    });
+    expect(store.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harness: "claude",
+        model: "anthropic/claude-sonnet-4-6",
+        reasoningEffort: null,
+        providerAuth: expect.arrayContaining([
+          expect.objectContaining({
+            provider: "anthropic",
+            authMode: "provider_account",
+            providerAccountId: "3".repeat(32),
+          }),
+        ]),
+      })
+    );
+    await expect(getInitBody(childStub)).resolves.toMatchObject({
+      harness: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+    });
+  });
+
+  it("spawns a Codex child with a qualified enabled model", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    vi.mocked(getEffectiveEnabledModels).mockResolvedValue([
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-6.1-sol",
+    ]);
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(env, {
+      title: "Implement feature",
+      prompt: "Implement the planned change",
+      harness: "codex",
+    });
+    expect(response.status).toBe(201);
+    expect(store.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harness: "codex",
+        model: "openai/gpt-6.1-sol",
+        reasoningEffort: "low",
+      })
+    );
+    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(expect.anything(), {
+      harness: "codex",
+      unattended: true,
+    });
+  });
+
+  it("refuses a Codex child on an unqualified sandbox provider", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    vi.mocked(getEffectiveEnabledModels).mockResolvedValue([
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-6.1-sol",
+    ]);
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(
+      { ...env, SANDBOX_PROVIDER: "e2b" },
+      { title: "Codex child", prompt: "Inspect", harness: "codex" }
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("qualified Modal sandbox provider"),
+    });
+    expect(store.create).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).not.toHaveBeenCalled();
+  });
+
+  it("rejects child creation when the target harness has no enabled compatible model", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(env, {
+      title: "Codex child",
+      prompt: "Inspect",
+      harness: "codex",
+    });
+    expect(response.status).toBe(409);
+    expect(store.create).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if credentials for a different child harness are unavailable", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    vi.mocked(resolveSessionProviderAuth).mockRejectedValue(new Error("D1 unavailable"));
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(env, {
+      title: "Claude child",
+      prompt: "Inspect",
+      harness: "claude",
+    });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Child provider auth unavailable",
+    });
+    expect(store.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown harness before spawning a child", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(env, {
+      title: "Bad child",
+      prompt: "Inspect",
+      harness: "unknown-harness",
+    });
+    expect(response.status).toBe(400);
+    expect(store.create).not.toHaveBeenCalled();
   });
 
   it("rejects a child whose model needs an auth mode the harness cannot select", async () => {

@@ -1,0 +1,33 @@
+# Manually verify SSH transport only. No deployment or remote mutation.
+name: Dashboard SSH readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dashboard-ssh-readiness
+  cancel-in-progress: false
+
+jobs:
+  ssh-readiness:
+    if: github.ref == 'refs/heads/main'
+    name: Verify dashboard SSH identity and non-root account
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: dashboard-production
+    steps:
+      - name: Checkout read-only probe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check pinned SSH host and credential (read only)
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
+        run: bash deploy/polytronx/ssh-readiness.sh dashboard

@@ -11,15 +11,15 @@ applied to any host. Nothing here has run against `172.235.26.148`. Live steps a
 - `private-executor-edge.test.mjs`: focused tests with stubs. CI runs it with
   `node --test deploy/polytronx/*.test.mjs`.
 
-## Scope (fixed in the scripts, not flags)
+## Scope (fixed port and private upstream; configurable validated IPv4 endpoints)
 
-| Item           | Value                                                                      |
-| -------------- | -------------------------------------------------------------------------- |
-| Edge address   | `172.235.26.148:19443`, bound to that address only                         |
-| Allowed source | `185.252.233.186`, enforced by UFW and by Caddy `remote_ip`                |
-| Upstream       | `127.0.0.1:8787` (executor, loopback only; compose publishes nothing else) |
-| Other ports    | Untouched. `80` and `443` are never opened or changed                      |
-| Sandbox bridge | `oi-sandbox`, bridge `br-oisandbox`, `10.251.7.0/24`, ICC off, IPv6 off    |
+| Item           | Value                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| Edge address   | `POLYTRONX_EXECUTOR_EDGE_ADDRESS` (default `172.235.26.148`), port `19443`; bound only there |
+| Allowed source | `POLYTRONX_DASHBOARD_SOURCE_IPV4` (default `185.252.233.186`); UFW and Caddy restrict it     |
+| Upstream       | `127.0.0.1:8787` (executor, loopback only; compose publishes nothing else)                   |
+| Other ports    | Untouched. `80` and `443` are never opened or changed                                        |
+| Sandbox bridge | `oi-sandbox`, bridge `br-oisandbox`, `10.251.7.0/24`, ICC off, IPv6 off                      |
 
 No plaintext listener is created. `auto_https off` and `admin off` are set, and there is no
 `http://` site.
@@ -58,7 +58,9 @@ No plaintext listener is created. `auto_https off` and `admin off` are set, and 
   syntax with `create_host_path: false`, so a missing file stops the start instead of creating a
   directory. `preflight.sh` refuses a missing file, a directory, a non-certificate, or any file that
   holds private-key bytes.
-- The CA name constraint is `IP:172.235.26.148/32`, so the CA can sign for that address only.
+- The CA name constraint is the configured executor IPv4 with a `/32` mask (default
+  `172.235.26.148/32`). It cannot sign for a changed address. Create fresh TLS material on a new
+  host; an existing mismatched certificate is refused.
 - The CA directory and the edge directory are disjoint. `render`, `check` and `apply` refuse them
   when they are equal or nested in either direction, and refuse any path not written as its resolved
   form (a symlink, `.`, `..`, a repeated or trailing slash).
@@ -67,7 +69,10 @@ No plaintext listener is created. `auto_https off` and `admin off` are set, and 
 
 ## Apply (operator, as root, on the VPS)
 
-Prerequisites: compose.executor.yml publishes the executor on `127.0.0.1:8787`, UFW is active with
+Prerequisites: on a replacement executor, set `POLYTRONX_EXECUTOR_EDGE_ADDRESS` and
+`POLYTRONX_DASHBOARD_SOURCE_IPV4` to independently verified unicast IPv4 addresses, and use the same
+values for render/check/apply/rollback. Read [executor-rotation.md](executor-rotation.md) before
+changing hosts. compose.executor.yml publishes the executor on `127.0.0.1:8787`, UFW is active with
 SSH allowed, and the Caddy archive has passed the SHA-256 check above (or a Caddy image is pinned by
 digest). Run the sandbox network first: `preflight-executor.sh` requires it before any executor
 deploy.

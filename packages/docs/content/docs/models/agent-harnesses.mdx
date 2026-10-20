@@ -21,7 +21,7 @@ This page explains what an agent harness is, how OpenCode and Claude Agent diffe
 
 The agent harness is the coding agent that runs inside the sandbox. Every session runs on exactly one harness, chosen when the session is created and fixed for its lifetime, like the base branch.
 
-- Child sessions inherit their parent's harness.
+- Child sessions inherit their parent's harness by default. An agent may explicitly choose a different harness when spawning a child; its credentials are resolved using the installation's unattended policy rather than copying the parent's pinned accounts. Codex children require Modal or Modal VM.
 - An automation carries a harness for the sessions it creates.
 - Sessions started by Linear run on the harness chosen in Settings › Integrations › Linear, globally or per repository (OpenCode by default). A model the chosen harness cannot run, such as one from a `model:gpt-*` label, is refused with an error activity and no coding session. Choose a compatible `model:*` label, user preference, or default model, or change the integration harness, then delegate again.
 - Sessions started by Slack run on the harness the user chose in the Slack app's Home tab, else the one chosen in Settings › Integrations › Slack (OpenCode by default). A request whose model that harness cannot run, such as one from `!model openai/gpt-5.4` or an App Home preference, is refused rather than started on OpenCode. A Slack thread keeps its session's harness.

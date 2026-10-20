@@ -24,8 +24,9 @@ import { dirname, join } from "node:path";
  * - Root: an absolute, normalized directory, VPS_EXECUTOR_WORKSPACE_ROOT (default /srv/vps-ws/slots).
  *   It is bind-mounted into the executor at the same path, so the path checked and the path docker
  *   binds are one string.
- * - Images: /srv/vps-ws/images/slot-<k>.img for k in 0..5, each `fallocate -l 10G` (root, 0600).
- *   Six images are 60 GiB reserved at setup. Host free space beyond that is provisioning's concern.
+ * - Images: /srv/vps-ws/images/slot-<k>.img for k in 0..(configured count - 1), each
+ *   `fallocate -l 10G` (root, 0600). The host setup defaults to sixteen (160 GiB reserved)
+ *   and may provision 3-16; its preflight reserves another 30 GiB of free disk space.
  * - Filesystem: `mkfs.ext4 -F -m 0 -N 262144 -E root_owner=1000:1000` on each image.
  * - Mount: loop-mounted once at boot, from fstab: `<image> <root>/<k> ext4 loop,nosuid,nodev,noatime 0 0`.
  *   Mountpoints are created as root with mode 0700 before `mount -a`. The loop module must be loaded.
