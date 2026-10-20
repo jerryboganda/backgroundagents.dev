@@ -317,6 +317,7 @@ export async function handleSpawnChild(
   );
   if (harnessAuthIncompatibility) return error(harnessAuthIncompatibility.message, 400);
 
+  const childTitle = body.role ? `[${body.role}] ${body.title}` : body.title;
   const childDepth = parentDepth + 1;
   const childId = generateId();
 
@@ -355,7 +356,7 @@ export async function handleSpawnChild(
       spawnContext.repoOwner && spawnContext.repoName
         ? (spawnContext.baseBranch ?? DEFAULT_BASE_BRANCH)
         : null,
-    title: body.title,
+    title: childTitle,
     harness,
     model,
     reasoningEffort,
@@ -453,7 +454,7 @@ export async function handleSpawnChild(
           body: JSON.stringify({
             childSessionId: childId,
             status: "created",
-            title: body.title,
+            title: childTitle,
           }),
         })
         .catch((err: unknown) => {
