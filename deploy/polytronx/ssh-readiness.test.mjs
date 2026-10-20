@@ -118,3 +118,19 @@ test("an unverified host, an invalid key, or mismatched SSH port fails closed", 
     f.cleanup();
   }
 });
+
+
+test("both deployment environments remain manual, distinct, and main-only", () => {
+  const workflowDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows");
+  for (const target of ["dashboard", "executor"]) {
+    const yaml = readFileSync(join(workflowDir, target + "-ssh-readiness.yml"), "utf8");
+    assert.match(yaml, /^  workflow_dispatch:/m);
+    assert.doesNotMatch(yaml, /^  pull_request:/m);
+    assert.match(yaml, /if: github\.ref == 'refs\/heads\/main'/);
+    assert.match(yaml, new RegExp("environment: " + target + "-production"));
+    assert.match(yaml, /secrets\.SSH_PRIVATE_KEY/);
+    assert.match(yaml, /vars\.SSH_KNOWN_HOSTS/);
+    assert.match(yaml, new RegExp("ssh-readiness\\.sh " + target));
+    assert.doesNotMatch(yaml, /StrictHostKeyChecking=no|ssh-keyscan|deploy\.sh --/);
+  }
+});
