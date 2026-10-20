@@ -55,7 +55,6 @@ jobs:
           packages/control-plane/src/agent-role-profiles.test.ts
           packages/control-plane/src/node/config.ts
           packages/control-plane/src/types.ts
-          docs/AGENT_ROLES.md
           packages/control-plane/src/routes/session-child-spawn.ts
           packages/control-plane/src/router.spawn-child.test.ts
           packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js
