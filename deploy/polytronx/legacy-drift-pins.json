@@ -16,13 +16,13 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "status": "D",
-      "sha": null
+      "status": "M",
+      "sha": "7c8ff908ab7d86e2536eb1d6bd8c39fdad36dcfc"
     },
     {
       "path": ".github/workflows/compose-smoke.yml",
-      "status": "D",
-      "sha": null
+      "status": "M",
+      "sha": "8b4a45f942e60a0add1de157a7a8a350c4372cc1"
     },
     {
       "path": ".github/workflows/coverage.yml",
