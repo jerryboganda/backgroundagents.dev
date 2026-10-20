@@ -183,6 +183,26 @@ test("the SSH setup reads the key from the secret and never prints it", () => {
   assert.match(action, /tr -d '\\r'/);
 });
 
+test("the executor workflow reaches its host through the jump host", () => {
+  const executor = workflows.find((workflow) => workflow.name === "executor");
+  const dashboard = workflows.find((workflow) => workflow.name === "dashboard");
+  // The executor workflow names the jump host and hands the action its key.
+  assert.match(executor.text, /jump-private-key: \$\{\{ secrets\.SSH_JUMP_PRIVATE_KEY \}\}/);
+  assert.match(executor.text, /jump-host: \$\{\{ vars\.SSH_JUMP_HOST \}\}/);
+  assert.match(executor.text, /jump-fingerprint: \$\{\{ vars\.SSH_JUMP_HOST_FINGERPRINT \}\}/);
+  // The dashboard host is reached directly, so it names no jump host.
+  assert.doesNotMatch(dashboard.text, /SSH_JUMP/);
+  assert.doesNotMatch(dashboard.text, /jump-/);
+  // The action writes the jump block and the ProxyJump that uses it.
+  assert.match(action, /ProxyJump jump/);
+  assert.match(action, /Host jump/);
+  assert.match(action, /jump_id_ed25519/);
+  assert.match(action, /jump_known_hosts/);
+  // The jump host's key is its own: it never replaces the target's key.
+  assert.match(action, /id_ed25519/);
+  assert.doesNotMatch(action, /jump-private-key: \$\{\{ secrets\.SSH_PRIVATE_KEY/);
+});
+
 test("the deployment workflows use the shared SSH setup action", () => {
   for (const workflow of workflows) {
     assert.match(workflow.text, /uses: \.\/\.github\/actions\/ssh-setup/);

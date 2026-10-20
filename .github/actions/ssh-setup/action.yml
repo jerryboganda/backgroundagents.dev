@@ -8,6 +8,11 @@
 # the key that was read from the server console, and the key the server presents now
 # must be that same key. A mismatch stops the run.
 #
+# A host that a runner cannot reach can be reached through a jump host: give the jump
+# host's key and its known hosts records here, and the connection to the target travels
+# through it. The target's own key never leaves the runner, and the jump host's key may
+# only forward to the one address and port it is given.
+#
 # The client configuration is written with -F, so the system-wide ssh_config is ignored:
 # the options below are the only ones that apply to the deployment connection.
 name: Set up the deployment SSH connection
@@ -23,6 +28,9 @@ inputs:
   host:
     description: The host to connect to, from the environment variable SSH_HOST.
     required: true
+  user:
+    description: The account to connect as, from the environment variable SSH_USER.
+    required: false
   port:
     description: The SSH port, from the environment variable SSH_PORT.
     required: false
@@ -30,6 +38,25 @@ inputs:
   fingerprint:
     description: The SHA256 fingerprint of the host key, read from the server console.
     required: true
+  jump-private-key:
+    description: The jump host's private key, from the environment secret SSH_JUMP_PRIVATE_KEY.
+    required: false
+  jump-known-hosts:
+    description: The jump host's verified known hosts records.
+    required: false
+  jump-host:
+    description: The jump host to reach the target through.
+    required: false
+  jump-user:
+    description: The account on the jump host.
+    required: false
+  jump-port:
+    description: The jump host's SSH port.
+    required: false
+    default: "22"
+  jump-fingerprint:
+    description: The SHA256 fingerprint of the jump host's key, read from its console.
+    required: false
 
 outputs:
   config:
@@ -47,6 +74,12 @@ runs:
         HOST: ${{ inputs.host }}
         PORT: ${{ inputs.port }}
         FINGERPRINT: ${{ inputs.fingerprint }}
+        JUMP_PRIVATE_KEY: ${{ inputs.jump-private-key }}
+        JUMP_KNOWN_HOSTS: ${{ inputs.jump-known-hosts }}
+        JUMP_HOST: ${{ inputs.jump-host }}
+        JUMP_USER: ${{ inputs.jump-user }}
+        JUMP_PORT: ${{ inputs.jump-port }}
+        JUMP_FINGERPRINT: ${{ inputs.jump-fingerprint }}
       run: |
         set -euo pipefail
         missing=""
@@ -63,12 +96,23 @@ runs:
           echo "::error::The host key fingerprint must be the SHA256 fingerprint that ssh-keygen prints."
           exit 1
         fi
+        # The jump host is all or nothing: either every part of it is there, or none is.
+        jump_parts=0
+        for value in "$JUMP_PRIVATE_KEY" "$JUMP_KNOWN_HOSTS" "$JUMP_HOST" "$JUMP_USER" "$JUMP_FINGERPRINT"; do
+          if [ -n "$value" ]; then jump_parts=$((jump_parts + 1)); fi
+        done
+        if [ "$jump_parts" != 0 ] && [ "$jump_parts" != 5 ]; then
+          echo "::error::The jump host needs its key, its known hosts records, its host, its user and its fingerprint."
+          exit 1
+        fi
 
     - name: Write the key and the known hosts file
       shell: bash
       env:
         PRIVATE_KEY: ${{ inputs.private-key }}
         KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        JUMP_PRIVATE_KEY: ${{ inputs.jump-private-key }}
+        JUMP_KNOWN_HOSTS: ${{ inputs.jump-known-hosts }}
       run: |
         set -euo pipefail
         dir="$RUNNER_TEMP/polytronx-ssh"
@@ -82,6 +126,16 @@ runs:
           echo "::error::The value in SSH_PRIVATE_KEY is not a readable OpenSSH private key."
           exit 1
         fi
+        if [ -n "$JUMP_PRIVATE_KEY" ]; then
+          printf '%s\n' "$JUMP_PRIVATE_KEY" | tr -d '\r' >"$dir/jump_id_ed25519"
+          chmod 600 "$dir/jump_id_ed25519"
+          printf '%s\n' "$JUMP_KNOWN_HOSTS" | tr -d '\r' >"$dir/jump_known_hosts"
+          chmod 644 "$dir/jump_known_hosts"
+          if ! ssh-keygen -l -f "$dir/jump_id_ed25519" >/dev/null 2>&1; then
+            echo "::error::The value in SSH_JUMP_PRIVATE_KEY is not a readable OpenSSH private key."
+            exit 1
+          fi
+        fi
 
     - name: Check the host key against the recorded fingerprint
       shell: bash
@@ -89,6 +143,9 @@ runs:
         HOST: ${{ inputs.host }}
         PORT: ${{ inputs.port }}
         FINGERPRINT: ${{ inputs.fingerprint }}
+        JUMP_HOST: ${{ inputs.jump-host }}
+        JUMP_PORT: ${{ inputs.jump-port }}
+        JUMP_FINGERPRINT: ${{ inputs.jump-fingerprint }}
       run: |
         set -euo pipefail
         dir="$RUNNER_TEMP/polytronx-ssh"
@@ -120,30 +177,73 @@ runs:
           exit 1
         fi
         echo "host key verified: $expected"
+        # The jump host is held to its own key the same way.
+        if [ -n "$JUMP_HOST" ]; then
+          jump_expected="$(printf '%s' "$JUMP_FINGERPRINT" | grep -oE 'SHA256:[A-Za-z0-9+/=]+' | head -n 1)"
+          jump_matches="$(ssh-keygen -F "$JUMP_HOST" -f "$dir/jump_known_hosts" 2>/dev/null || true)"
+          if [ -z "$jump_matches" ]; then
+            jump_matches="$(ssh-keygen -F "[$JUMP_HOST]:$JUMP_PORT" -f "$dir/jump_known_hosts" 2>/dev/null || true)"
+          fi
+          if [ -z "$jump_matches" ]; then
+            echo "::error::The jump host's known hosts file holds no record for $JUMP_HOST."
+            exit 1
+          fi
+          jump_recorded="$(printf '%s\n' "$jump_matches" | grep -v '^#' | ssh-keygen -l -f - -E sha256 | awk '{print $2}' | sort -u)"
+          if ! printf '%s\n' "$jump_recorded" | grep -qxF "$jump_expected"; then
+            echo "::error::The jump host's known hosts file holds a different key than the recorded fingerprint."
+            exit 1
+          fi
+          echo "jump host key verified: $jump_expected"
+        fi
 
     - name: Write the SSH client configuration
       id: client-config
       shell: bash
       env:
+        HOST: ${{ inputs.host }}
+        USER: ${{ inputs.user }}
         PORT: ${{ inputs.port }}
+        JUMP_HOST: ${{ inputs.jump-host }}
+        JUMP_USER: ${{ inputs.jump-user }}
+        JUMP_PORT: ${{ inputs.jump-port }}
       run: |
         set -euo pipefail
         dir="$RUNNER_TEMP/polytronx-ssh"
-        printf '%s\n' \
-          'Host *' \
-          "  IdentityFile $dir/id_ed25519" \
-          '  IdentitiesOnly yes' \
-          "  UserKnownHostsFile $dir/known_hosts" \
-          '  StrictHostKeyChecking yes' \
-          '  UpdateHostKeys no' \
-          '  PasswordAuthentication no' \
-          '  KbdInteractiveAuthentication no' \
-          '  BatchMode yes' \
-          '  ConnectTimeout 20' \
-          '  ServerAliveInterval 30' \
-          '  ServerAliveCountMax 4' \
-          "  Port $PORT" \
-          >"$dir/config"
+        {
+          printf '%s\n' "Host $HOST"
+          printf '%s\n' "  HostName $HOST"
+          if [ -n "$USER" ]; then printf '%s\n' "  User $USER"; fi
+          printf '%s\n' "  Port $PORT"
+          printf '%s\n' "  IdentityFile $dir/id_ed25519"
+          printf '%s\n' "  IdentitiesOnly yes"
+          printf '%s\n' "  UserKnownHostsFile $dir/known_hosts"
+          printf '%s\n' "  StrictHostKeyChecking yes"
+          printf '%s\n' "  UpdateHostKeys no"
+          printf '%s\n' "  PasswordAuthentication no"
+          printf '%s\n' "  KbdInteractiveAuthentication no"
+          printf '%s\n' "  BatchMode yes"
+          printf '%s\n' "  ConnectTimeout 20"
+          printf '%s\n' "  ServerAliveInterval 30"
+          printf '%s\n' "  ServerAliveCountMax 4"
+          if [ -n "$JUMP_HOST" ]; then
+            printf '%s\n' "  ProxyJump jump"
+          fi
+          if [ -n "$JUMP_HOST" ]; then
+            printf '%s\n' "Host jump"
+            printf '%s\n' "  HostName $JUMP_HOST"
+            printf '%s\n' "  User $JUMP_USER"
+            printf '%s\n' "  Port $JUMP_PORT"
+            printf '%s\n' "  IdentityFile $dir/jump_id_ed25519"
+            printf '%s\n' "  IdentitiesOnly yes"
+            printf '%s\n' "  UserKnownHostsFile $dir/jump_known_hosts"
+            printf '%s\n' "  StrictHostKeyChecking yes"
+            printf '%s\n' "  UpdateHostKeys no"
+            printf '%s\n' "  PasswordAuthentication no"
+            printf '%s\n' "  KbdInteractiveAuthentication no"
+            printf '%s\n' "  BatchMode yes"
+            printf '%s\n' "  ConnectTimeout 20"
+          fi
+        } >"$dir/config"
         chmod 600 "$dir/config"
         echo "path=$dir/config" >>"$GITHUB_OUTPUT"
         echo "SSH_CONFIG=$dir/config" >>"$GITHUB_ENV"

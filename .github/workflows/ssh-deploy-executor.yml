@@ -52,6 +52,14 @@ jobs:
       SSH_USER: ${{ vars.SSH_USER }}
       SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
       SSH_HOST_FINGERPRINT: ${{ vars.SSH_HOST_FINGERPRINT }}
+      # The runner cannot open a connection to this host's SSH port, so the
+      # connection travels through the dashboard host. The key below may only
+      # forward to this host's SSH port, and the executor's own key stays here.
+      SSH_JUMP_HOST: ${{ vars.SSH_JUMP_HOST }}
+      SSH_JUMP_USER: ${{ vars.SSH_JUMP_USER }}
+      SSH_JUMP_PORT: ${{ vars.SSH_JUMP_PORT || '22' }}
+      SSH_JUMP_KNOWN_HOSTS: ${{ vars.SSH_JUMP_KNOWN_HOSTS }}
+      SSH_JUMP_HOST_FINGERPRINT: ${{ vars.SSH_JUMP_HOST_FINGERPRINT }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,8 +97,15 @@ jobs:
           private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           known-hosts: ${{ vars.SSH_KNOWN_HOSTS }}
           host: ${{ vars.SSH_HOST }}
+          user: ${{ vars.SSH_USER }}
           port: ${{ vars.SSH_PORT || '22' }}
           fingerprint: ${{ vars.SSH_HOST_FINGERPRINT }}
+          jump-private-key: ${{ secrets.SSH_JUMP_PRIVATE_KEY }}
+          jump-known-hosts: ${{ vars.SSH_JUMP_KNOWN_HOSTS }}
+          jump-host: ${{ vars.SSH_JUMP_HOST }}
+          jump-user: ${{ vars.SSH_JUMP_USER }}
+          jump-port: ${{ vars.SSH_JUMP_PORT || '22' }}
+          jump-fingerprint: ${{ vars.SSH_JUMP_HOST_FINGERPRINT }}
 
       - name: Check the connection
         run: |

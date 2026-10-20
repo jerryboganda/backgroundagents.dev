@@ -85,6 +85,7 @@ jobs:
           private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           known-hosts: ${{ vars.SSH_KNOWN_HOSTS }}
           host: ${{ vars.SSH_HOST }}
+          user: ${{ vars.SSH_USER }}
           port: ${{ vars.SSH_PORT || '22' }}
           fingerprint: ${{ vars.SSH_HOST_FINGERPRINT }}
 

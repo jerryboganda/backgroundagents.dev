@@ -1,6 +1,8 @@
 # Operational files are read as LF text by bash, sed and the deploy tests. These rules pin them
 # to LF in every checkout, so core.autocrlf=true on Windows cannot turn them into CRLF.
 deploy/polytronx/** text eol=lf
+# The example environment is read line by line by a test.
+.env.example text eol=lf
 .github/workflows/polytronx-openinspect.yml text eol=lf
 .github/workflows/ssh-deploy-*.yml text eol=lf
 .github/actions/ssh-setup/action.yml text eol=lf
