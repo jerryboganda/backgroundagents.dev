@@ -54,6 +54,16 @@ const items = [
       },
     ],
   },
+  {
+    category: "OpenCode Zen",
+    models: [
+      {
+        id: "opencode/beam-free",
+        name: "Beam (free)",
+        description: "OpenCode free tier",
+      },
+    ],
+  },
 ] satisfies ModelCategory[];
 
 describe("ModelReasoningSelector", () => {
@@ -144,6 +154,29 @@ describe("ModelReasoningSelector", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: /^agent/i }));
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "OpenCode" }));
     expect(onHarnessChange).toHaveBeenCalledWith("opencode");
+  });
+
+  it("offers effort options for an OpenCode model", async () => {
+    const onReasoningEffortChange = vi.fn();
+    render(
+      <ModelReasoningSelector
+        selectedModel="opencode/beam-free"
+        reasoningEffort={undefined}
+        items={items}
+        onModelChange={vi.fn()}
+        onReasoningEffortChange={onReasoningEffortChange}
+        harness="opencode"
+      />
+    );
+
+    const trigger = screen.getByRole("button", { name: /model and effort/i });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const effortMenu = await screen.findByRole("menuitem", { name: /effort/i });
+    effortMenu.focus();
+    fireEvent.keyDown(effortMenu, { key: "ArrowRight" });
+    const xhigh = await screen.findByRole("menuitemradio", { name: "XHigh" });
+    fireEvent.click(xhigh);
+    expect(onReasoningEffortChange).toHaveBeenCalledWith("xhigh");
   });
 
   it("selects model and effort through nested menus", async () => {

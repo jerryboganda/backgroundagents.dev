@@ -14,7 +14,7 @@ import { SUBSCRIPTION_PROVIDER_IDS, type SubscriptionProviderId } from "./types/
  * - "low"/"medium"/"high"/"xhigh": Progressive reasoning depth
  * - "max": Maximum reasoning effort for models that support it
  */
-export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const GPT_5_6_DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 
@@ -268,15 +268,47 @@ export const MODEL_CATALOG = [
       // Free-tier models. OpenCode serves them only to its own client, which is what runs in the sandbox.
       { id: "opencode/big-pickle", name: "Big Pickle (free)", description: "OpenCode free tier" },
       { id: "opencode/beam-free", name: "Beam (free)", description: "OpenCode free tier" },
-      { id: "opencode/glm-5.3-flash-free", name: "GLM 5.3 Flash (free)", description: "Z.ai, free tier" },
-      { id: "opencode/deepseek-v4.1-flash-free", name: "DeepSeek V4.1 Flash (free)", description: "DeepSeek, free tier" },
-      { id: "opencode/mimo-v2.6-flash-free", name: "MiMo V2.6 Flash (free)", description: "Xiaomi, free tier" },
-      { id: "opencode/nemotron-3.5-super-vl-free", name: "Nemotron 3.5 Super VL (free)", description: "NVIDIA, free tier" },
-      { id: "opencode/nemotron-3.5-lightning-free", name: "Nemotron 3.5 Lightning (free)", description: "NVIDIA, free tier" },
-      { id: "opencode/longcat-2.5-preview-free", name: "LongCat 2.5 Preview (free)", description: "Meituan, free tier" },
+      {
+        id: "opencode/glm-5.3-flash-free",
+        name: "GLM 5.3 Flash (free)",
+        description: "Z.ai, free tier",
+      },
+      {
+        id: "opencode/deepseek-v4.1-flash-free",
+        name: "DeepSeek V4.1 Flash (free)",
+        description: "DeepSeek, free tier",
+      },
+      {
+        id: "opencode/mimo-v2.6-flash-free",
+        name: "MiMo V2.6 Flash (free)",
+        description: "Xiaomi, free tier",
+      },
+      {
+        id: "opencode/nemotron-3.5-super-vl-free",
+        name: "Nemotron 3.5 Super VL (free)",
+        description: "NVIDIA, free tier",
+      },
+      {
+        id: "opencode/nemotron-3.5-lightning-free",
+        name: "Nemotron 3.5 Lightning (free)",
+        description: "NVIDIA, free tier",
+      },
+      {
+        id: "opencode/longcat-2.5-preview-free",
+        name: "LongCat 2.5 Preview (free)",
+        description: "Meituan, free tier",
+      },
       { id: "opencode/jev-1.13-free", name: "Jev 1.13 (free)", description: "OpenCode free tier" },
-      { id: "opencode/space-bunny-free", name: "Space Bunny (free)", description: "OpenCode free tier" },
-      { id: "opencode/minimax-m3.1-flash-free", name: "MiniMax M3.1 Flash (free)", description: "MiniMax, free tier" },
+      {
+        id: "opencode/space-bunny-free",
+        name: "Space Bunny (free)",
+        description: "OpenCode free tier",
+      },
+      {
+        id: "opencode/minimax-m3.1-flash-free",
+        name: "MiniMax M3.1 Flash (free)",
+        description: "MiniMax, free tier",
+      },
     ],
   },
   {
@@ -335,10 +367,18 @@ export const MODEL_CATALOG = [
       { id: "opencode-go/grok-4.7", name: "Grok 4.7", description: "xAI" },
       { id: "opencode-go/mimo-v2.6-flash", name: "MiMo V2.6 Flash", description: "Xiaomi" },
       { id: "opencode-go/mimo-v2.6-pro", name: "MiMo V2.6 Pro", description: "Xiaomi" },
-      { id: "opencode-go/longcat-2.5-preview-free", name: "LongCat 2.5 Preview (free)", description: "Meituan, free tier" },
+      {
+        id: "opencode-go/longcat-2.5-preview-free",
+        name: "LongCat 2.5 Preview (free)",
+        description: "Meituan, free tier",
+      },
       { id: "opencode-go/beam-free", name: "Beam (free)", description: "OpenCode free tier" },
       { id: "opencode-go/space-bunny", name: "Space Bunny", description: "OpenCode" },
-      { id: "opencode-go/minimax-m3.1-flash-free", name: "MiniMax M3.1 Flash (free)", description: "MiniMax, free tier" },
+      {
+        id: "opencode-go/minimax-m3.1-flash-free",
+        name: "MiniMax M3.1 Flash (free)",
+        description: "MiniMax, free tier",
+      },
       { id: "opencode-go/omen-alpha", name: "Omen Alpha", description: "OpenCode" },
       { id: "opencode-go/step-5-preview", name: "Step 5 Preview", description: "StepFun" },
       { id: "opencode-go/claude-haiku-5-5", name: "Claude Haiku 5.5", description: "Anthropic" },
@@ -413,8 +453,8 @@ if (defaultModels.length !== 1) {
 }
 export const DEFAULT_MODEL: ValidModel = defaultModels[0].id;
 
-/** Per-model reasoning configuration. Models omitted do not support reasoning controls. */
-export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningConfig>> =
+/** Reasoning configuration carried by the catalog entries above. */
+const CATALOG_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningConfig>> =
   Object.fromEntries(
     MODEL_CATALOG.flatMap((group) =>
       group.models.flatMap((model) =>
@@ -429,6 +469,98 @@ export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningCo
       )
     )
   );
+
+/**
+ * OpenCode Zen and Go advertise reasoning efforts through models.dev rather
+ * than the static catalog entries above. Keep these lists aligned with the
+ * variant bodies in packages/sandbox-runtime/src/sandbox_runtime/opencode_server.py.
+ * Models omitted here expose no effort levels (some still have a thinking
+ * toggle, which OpenCode does not let this UI select).
+ */
+export const OPENCODE_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningConfig>> = {
+  "opencode/kimi-k3": { efforts: ["max"], default: undefined },
+  "opencode/glm-5.2": { efforts: ["high", "max"], default: undefined },
+  "opencode/beam-free": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode/glm-5.3-flash-free": { efforts: ["low", "high", "max"], default: undefined },
+  "opencode/deepseek-v4.1-flash-free": { efforts: ["low", "high", "max"], default: undefined },
+  "opencode/nemotron-3.5-super-vl-free": {
+    efforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "opencode/space-bunny-free": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode/minimax-m3.1-flash-free": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode-go/grok-4.6": {
+    efforts: ["low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "opencode-go/gpt-5.6-luna": {
+    efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode-go/glm-5.3-flash": { efforts: ["low", "high", "max"], default: undefined },
+  "opencode-go/glm-5.3": { efforts: ["low", "high", "max"], default: undefined },
+  "opencode-go/glm-5.2": { efforts: ["high", "max"], default: undefined },
+  "opencode-go/kimi-k3": { efforts: ["max"], default: undefined },
+  "opencode-go/deepseek-v4.1-flash": { efforts: ["low", "high", "max"], default: undefined },
+  "opencode-go/deepseek-v4-pro": { efforts: ["high", "max"], default: undefined },
+  "opencode-go/deepseek-v4-flash": { efforts: ["low", "high", "max"], default: undefined },
+  "opencode-go/deepseek-v4-flash-vision-exp": {
+    efforts: ["low", "high", "max"],
+    default: undefined,
+  },
+  "opencode-go/muse-spark-1.3-contributor": {
+    efforts: ["minimal", "low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "opencode-go/muse-spark-1.2-contributor": {
+    efforts: ["minimal", "low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "opencode-go/qwen3.8-max": { efforts: ["low", "medium", "xhigh"], default: undefined },
+  "opencode-go/qwen3.8-flash": { efforts: ["low", "medium", "xhigh"], default: undefined },
+  "opencode-go/hy4-preview": { efforts: ["none", "high"], default: undefined },
+  "opencode-go/hy3": { efforts: ["none", "low", "high"], default: undefined },
+  "opencode-go/grok-4.7": {
+    efforts: ["low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "opencode-go/beam-free": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode-go/space-bunny": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode-go/minimax-m3.1-flash-free": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode-go/step-5-preview": { efforts: ["low", "medium", "high"], default: undefined },
+  "opencode-go/claude-haiku-5-5": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: undefined,
+  },
+  "opencode-go/gemini-4-argon-contributor": {
+    efforts: ["low", "medium", "high"],
+    default: undefined,
+  },
+};
+
+/** Per-model reasoning configuration. Models omitted do not support reasoning controls. */
+export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningConfig>> = {
+  ...CATALOG_REASONING_CONFIG,
+  ...OPENCODE_REASONING_CONFIG,
+};
 
 export interface ModelDisplayInfo {
   id: ValidModel;
