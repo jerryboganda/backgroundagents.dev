@@ -67,6 +67,9 @@ section 7 gives:
 ssh-keygen -t ed25519 -a 100 -f ~/.ssh/bg_jump_ci -C "backgroundagents-executor-jump"
 ```
 
+It carries no passphrase either, for the same reason the other two do: the workflow uses it
+unattended, with no agent and no prompt.
+
 Its public key goes on the dashboard host, and the dashboard host's deployment account accepts it
 for one thing only: forwarding to the executor's SSH port. The line in
 `/home/deploy/.ssh/authorized_keys` on the dashboard host is:
@@ -75,8 +78,21 @@ for one thing only: forwarding to the executor's SSH port. The line in
 no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,permitopen="172.235.26.148:22",command="/bin/false" ssh-ed25519 <the jump key's public key>
 ```
 
-The options say what the key may do: no terminal, no agent, no X11, no command, and one address and
-port it may forward to. The executor's own key never reaches the dashboard host.
+`permitopen` limits where a forward may point, which is what the jump needs: only the executor's SSH
+port. It says nothing about a _remote_ forward, which asks the dashboard host to listen on a port,
+so the host refuses that separately, for the deployment account only:
+
+```
+# At the end of /etc/ssh/sshd_config on the dashboard host:
+Match User deploy
+    AllowTcpForwarding local
+```
+
+`local` keeps the forward the jump needs and refuses the one it does not. Validate the file with
+`sudo sshd -t` and reload with `sudo systemctl reload ssh`.
+
+The options on the key say what it may do: no terminal, no agent, no X11, no command, and one
+address and port it may forward to. The executor's own key never reaches the dashboard host.
 
 ## 2. The deployment account on each host
 
@@ -201,6 +217,22 @@ The branch is protected as well. A change reaches main through a pull request, t
 container smoke have to pass, and the conversation has to be resolved. The deployment runs from
 main, so the code it deploys is the code that passed those checks. The environment's approval is a
 separate act on top of that, and it is the one the owner gives.
+
+The rules are set on the branch, not in this repository:
+
+```
+gh api --method PUT repos/OWNER/REPO/branches/main/protection --input protection.json
+```
+
+with `protection.json` holding the required checks `Lint, types and tests` and
+`Compose smoke (container)`, `enforce_admins: true`, `required_pull_request_reviews` with
+`required_approving_review_count: 0`, `allow_force_pushes: false`, `allow_deletions: false` and
+`required_conversation_resolution: true`.
+
+A review count of zero lets the owner merge their own pull request, which is what a repository with
+one account can do. The gate that matters is the check: the code that reaches main has passed the CI
+and the container smoke, and the deployment ships that commit. A second account in the repository
+would let the rule also ask for an approval the author cannot give.
 
 The runner reaches the hosts over the public internet. If the firewall admits only fixed addresses,
 use a self-hosted runner inside that network instead of weakening the SSH settings.
@@ -359,8 +391,10 @@ The executor host is replaced every one or two months. Its credentials are repla
 dashboard's key is not touched.
 
 1. Update the jump host's forwarding rule: the `permitopen` address on the dashboard host names the
-   old executor, so it has to name the new one. The public key of the new jump key goes in the same
-   line.
+   old executor, so it has to name the new one. Keep the jump key itself, and change only that
+   address. If the jump key is replaced as well, the environment's `SSH_JUMP_PRIVATE_KEY` has to be
+   replaced with it in the same step, or the workflow presents a key the dashboard host no longer
+   accepts and every executor deployment is refused.
 2. Drain the workloads: stop the sessions through the control plane, and let the sandboxes stop. The
    retained workspaces are released by the three-day timer, or by the janitor.
 3. Generate a new key pair for the new host:
