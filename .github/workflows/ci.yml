@@ -1,0 +1,71 @@
+# The gate every change to main has to pass.
+#
+# It runs on every pull request and on every push to main, so the branch protection
+# rule can require it: a commit reaches main only with these checks green, and the
+# deployment workflows deploy that commit. The release workflow stays manual, because
+# it builds the images and takes an hour; this one is the quick gate.
+#
+# The Python side of the repository is checked by the release workflow, which runs the
+# locked uv project, ruff and mypy. That is slow enough to belong to the release, not
+# to every pull request.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes the run of the older one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared
+        run: npm run build -w @open-inspect/shared
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Control-plane tests
+        run: npm test -w @open-inspect/control-plane
+
+      - name: Web tests
+        run: npm test -w @open-inspect/web
+
+      - name: Deployment guard tests
+        # The deployment scripts, against stubbed docker, curl and df. Nothing reaches
+        # a host, a provider or the network.
+        run: node --test deploy/polytronx/*.test.mjs
+
+      - name: Workflow and SSH contract tests
+        # Every workflow file parses, and the SSH deployment workflows keep their
+        # manual trigger, their separate environments and their verified host keys.
+        run: node --test scripts/workflow-yaml-contract.test.mjs scripts/ssh-deploy-contract.test.mjs scripts/ssh-verify.test.mjs

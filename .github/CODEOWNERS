@@ -1,0 +1,9 @@
+# The owner of everything in this repository. A change to a deployment path is
+# reviewed by the owner before it lands, and the deployment runs from main only
+# after the CI gate is green.
+#
+# With one account, the owner can approve their own pull request, so the rule that
+# matters is the CI gate: the code that reaches main has passed the checks, and the
+# deployment deploys that commit. A second account in the repository would let
+# "Require a pull request" also ask for an approval that the author cannot give.
+* @jerryboganda
