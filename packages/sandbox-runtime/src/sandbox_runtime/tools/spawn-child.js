@@ -47,6 +47,9 @@ export default tool({
   async execute(args) {
     try {
       const body = { title: args.title, prompt: args.prompt };
+      if (args.role !== undefined) {
+        body.role = args.role;
+      }
       if (args.harness !== undefined) {
         body.harness = args.harness;
       }
