@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "upstreamRevision": "02a6bbf1c2720699444d91867026e8b0111ed6fc",
-  "baselineCommit": "366f85b5c575513e066a9a133690af772fd9519d",
+  "baselineCommit": "2d97ad98db3e2dbc74c85f5f2a592f181945a549",
   "notice": "Existing divergence manifest, not a security approval. Every file and removed workflow still requires review; update SHA pins only with explicit reviewed changes.",
   "exceptions": [
     {
@@ -16,13 +16,13 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "status": "D",
-      "sha": null
+      "status": "M",
+      "sha": "596e0e1d50bac38a8c9950d56b22e49213c47f33"
     },
     {
       "path": ".github/workflows/compose-smoke.yml",
-      "status": "D",
-      "sha": null
+      "status": "M",
+      "sha": "8b4a45f942e60a0add1de157a7a8a350c4372cc1"
     },
     {
       "path": ".github/workflows/coverage.yml",
