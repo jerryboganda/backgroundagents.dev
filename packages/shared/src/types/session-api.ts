@@ -338,12 +338,38 @@ export type SendPromptResponse = z.infer<typeof sendPromptResponseSchema>;
 /** @deprecated Import SessionListResponse from ./sessions. */
 export type ListSessionsResponse = SessionListResponse;
 
+/** Optional semantic role for a child; the deployment may pin its model and harness. */
+export const agentRoleSchema = z.enum([
+  "orchestrator",
+  "explorer",
+  "implementer",
+  "reviewer",
+  "ci",
+]);
+export type AgentRole = z.infer<typeof agentRoleSchema>;
+
+/** Operator-owned selections. Roles without a profile fail closed when requested. */
+const agentRoleProfileSchema = z.strictObject({
+  harness: harnessIdSchema,
+  model: nonEmptyStringSchema.optional(),
+  reasoningEffort: nonEmptyStringSchema.optional(),
+});
+
+export const agentRoleProfilesSchema = z.strictObject({
+  orchestrator: agentRoleProfileSchema.optional(),
+  explorer: agentRoleProfileSchema.optional(),
+  implementer: agentRoleProfileSchema.optional(),
+  reviewer: agentRoleProfileSchema.optional(),
+  ci: agentRoleProfileSchema.optional(),
+});
+
 /** Request body for POST /sessions/:parentId/children. */
 export const spawnChildSessionRequestSchema = z.object({
   title: z.string(),
   prompt: z.string(),
   /** Omission inherits the parent's harness; an override is fixed for the new child. */
   harness: harnessIdSchema.optional(),
+  role: agentRoleSchema.optional(),
   repoOwner: z.string().optional(),
   repoName: z.string().optional(),
   model: z.string().optional(),
