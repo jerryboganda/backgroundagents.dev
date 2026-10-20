@@ -29,6 +29,7 @@ test("exact reviewed multi-agent and VPS overlay paths are admitted", () => {
     ".github/workflows/executor-ssh-readiness.yml",
     ".github/workflows/dual-vps-ssh-contracts.yml",
     ".github/workflows/polytronx-overlay-contract.yml",
+    ".github/workflows/polytronx-release-integration.yml",
     "scripts/ship-executor.sh",
     "docs/AGENT_ROLES.md",
     "docs/HOW_IT_WORKS.md",
