@@ -35,9 +35,9 @@ describe("operator-configured child agent roles", () => {
 
   it("does not permit callers to override an operator-pinned harness or model", () => {
     const env = { AGENT_ROLE_PROFILES: configured };
-    expect(() =>
-      resolveChildRoleProfile(env, { role: "reviewer", harness: "opencode" })
-    ).toThrow(/conflicting overrides/);
+    expect(() => resolveChildRoleProfile(env, { role: "reviewer", harness: "opencode" })).toThrow(
+      /conflicting overrides/
+    );
     expect(() =>
       resolveChildRoleProfile(env, { role: "explorer", model: "openai/gpt-5.4" })
     ).toThrow(/conflicting overrides/);
@@ -61,7 +61,9 @@ describe("operator-configured child agent roles", () => {
       { AGENT_ROLE_PROFILES: JSON.stringify({ administrator: { harness: "opencode" } }) },
       { AGENT_ROLE_PROFILES: "a".repeat(9000) },
     ]) {
-      expect(() => resolveChildRoleProfile(env, { role: "explorer" })).toThrow(AgentRoleProfileError);
+      expect(() => resolveChildRoleProfile(env, { role: "explorer" })).toThrow(
+        AgentRoleProfileError
+      );
     }
   });
 
