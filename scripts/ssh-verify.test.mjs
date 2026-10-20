@@ -28,13 +28,21 @@ function writeKey(name = "id_ed25519") {
   return path;
 }
 
-/** A runner that answers the three commands the tool uses. */
+/**
+ * A runner that answers the three commands the tool uses. ssh-keyscan returns a public
+ * key, and ssh-keygen turns it into the fingerprint the console printed.
+ */
 function stubRunner({ scan = `host ${FINGERPRINT}`, authStatus = 0, authError = "" } = {}) {
   const calls = [];
   const run = (command, args) => {
     calls.push([command, ...args].join(" "));
     if (command === "ssh-keyscan") return { status: 0, stdout: scan, stderr: "" };
-    if (command === "ssh-keygen") return { status: 0, stdout: "", stderr: "" };
+    if (command === "ssh-keygen") {
+      // ssh-keygen reports the fingerprint of the key it is given, so the answer
+      // follows what the scan found.
+      const found = fingerprintsOf(scan);
+      return { status: 0, stdout: `256 ${found[0] ?? FINGERPRINT} host (ED25519)`, stderr: "" };
+    }
     if (command === "ssh") return { status: authStatus, stdout: "", stderr: authError };
     return { status: 1, stdout: "", stderr: `unexpected command ${command}` };
   };
@@ -165,7 +173,6 @@ describe("the checks as a whole", () => {
     assert.equal(result.ok, false);
     assert.ok(!stub.calls.some((call) => call.startsWith("ssh -i ")));
   });
-
   it("reports a key that cannot authenticate", () => {
     const stub = stubRunner({ authStatus: 255, authError: "Permission denied" });
     const result = verify(options(), { run: stub.run });

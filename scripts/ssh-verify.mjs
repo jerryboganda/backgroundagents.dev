@@ -25,8 +25,8 @@ const PRIVATE_KEY_HEADER = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
 const FINGERPRINT = /SHA256:[A-Za-z0-9+/=]+/g;
 
 /** Runs a command and returns its status and output. */
-export function runCommand(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+export function runCommand(command, args, options = {}) {
+  const result = spawnSync(command, args, { encoding: "utf8", ...options });
   return {
     status: result.status === null ? 1 : result.status,
     stdout: result.stdout ?? "",
@@ -140,7 +140,8 @@ export function authenticationArgs({ user, host, port, key, knownHosts }) {
 export function verify(options, deps = {}) {
   const run = deps.run ?? runCommand;
   const checks = [];
-  const add = (name, ok, detail = "") => checks.push({ name, ok, detail });
+  // A detail explains a failure. A check that passed keeps its detail to itself.
+  const add = (name, ok, detail = "") => checks.push({ name, ok, detail: ok ? "" : detail });
 
   if (!existsSync(options.key)) {
     add("the private key is there", false, `${options.key} does not exist`);
@@ -159,8 +160,13 @@ export function verify(options, deps = {}) {
   );
 
   const scan = run("ssh-keyscan", keyscanArgs(options));
-  const presented = scan.status === 0 ? scan.stdout : "";
-  const comparison = compareFingerprints(options.fingerprint, presented);
+  const scanned = scan.status === 0 ? scan.stdout : "";
+  // The scan gives public keys. ssh-keygen turns them into the fingerprints the console
+  // printed, which is what the comparison is about.
+  const listed = scanned
+    ? run("ssh-keygen", ["-l", "-f", "-", "-E", "sha256"], { input: scanned })
+    : { status: 1, stdout: "" };
+  const comparison = compareFingerprints(options.fingerprint, listed.stdout);
   add("the host key matches the fingerprint from the console", comparison.ok, comparison.detail);
   if (!comparison.ok) return { checks, ok: false };
 
@@ -171,7 +177,7 @@ export function verify(options, deps = {}) {
     // it is the one record the check needs.
     temporary = mkdtempSync(join(tmpdir(), "polytronx-ssh-verify-"));
     knownHosts = join(temporary, "known_hosts");
-    writeFileSync(knownHosts, presented, { mode: 0o600 });
+    writeFileSync(knownHosts, scanned, { mode: 0o600 });
   } else if (!existsSync(knownHosts)) {
     add("the known hosts file is there", false, `${knownHosts} does not exist`);
     return { checks, ok: false };
