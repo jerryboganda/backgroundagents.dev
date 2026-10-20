@@ -709,6 +709,11 @@ def build_tools(client: ControlPlaneToolClient) -> list[ToolDefinition]:
             {
                 "type": "object",
                 "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": ["orchestrator", "explorer", "implementer", "reviewer", "ci"],
+                        "description": "Optional operator-configured role; the control plane selects the pinned harness and model. Conflicting overrides fail.",
+                    },
                     "title": {
                         "type": "string",
                         "description": "Short title describing the child session (shown in the UI).",
