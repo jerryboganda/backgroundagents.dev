@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
 #
-# Workspace slots for the VPS executor: sixteen 10 GiB ext4 images, each loop-mounted at
+# Workspace slots for the VPS executor: 10 GiB ext4 images, each loop-mounted at
 # /srv/vps-ws/slots/<k>. A sandbox binds one slot as its /workspace (packages/vps-executor/src/workspace.ts).
+# EXECUTOR_WORKSPACE_SLOTS controls the host count (3-16, default 16); configure it before
+# provisioning and use the same value in the executor release.env. Existing slots are never shrunk.
 #
 #   workspace-slots.sh --check   read-only: one PASS or FAIL line per item; exit 1 on any FAIL
 #   workspace-slots.sh --apply   as root, once: creates what is missing and mounts each slot
 #
 # --apply judges the whole host first, so a refusal changes no image and no fstab line. It never
 # formats, overwrites or removes an existing image or file. It mounts each slot by its own path,
-# never with mount -a, and it never runs fsck. It backs up /etc/fstab, then appends only its sixteen
-# lines. Re-running it is safe: a slot already in the expected state is left alone.
+# never with mount -a, and it never runs fsck. It backs up /etc/fstab, then appends only
+# the missing slot lines. Re-running it is safe: an expected existing slot is left alone.
 
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-SLOT_COUNT=16
+MAX_SLOT_COUNT=16
+SLOT_COUNT="${EXECUTOR_WORKSPACE_SLOTS:-16}"
+# The default free-slot reserve is 2; leave at least one other workspace usable.
+if [[ ! "$SLOT_COUNT" =~ ^([3-9]|1[0-6])$ ]]; then
+  echo "FAIL  EXECUTOR_WORKSPACE_SLOTS must be an integer from 3 through 16" >&2
+  exit 2
+fi
 SLOT_BYTES=10737418240          # 10 GiB, the size of every image (fallocate -l 10G)
 FS_MIN_BYTES=9663676416         # 9 GiB: the filesystem inside an image is a little smaller than the image
 HOST_FREE_MIN_BYTES=32212254720 # 30 GiB that must stay free on the images' filesystem
@@ -174,6 +182,21 @@ check_slot() {
   return 1
 }
 
+# A smaller host setting may never hide previously provisioned higher slots.
+# Refuse a shrink even if the executor database has not been opened yet.
+check_unconfigured_slots() {
+  local k rc=0
+  for ((k = SLOT_COUNT; k < MAX_SLOT_COUNT; k++)); do
+    if [ -e "$(image_of "$k")" ] || [ -L "$(image_of "$k")" ] ||
+      [ -e "$(dir_of "$k")" ] || [ -L "$(dir_of "$k")" ] ||
+      [ "$(fstab_state "$k")" != absent ]; then
+      echo "FAIL  slot $k exists outside configured EXECUTOR_WORKSPACE_SLOTS=$SLOT_COUNT; refusing to shrink a provisioned host"
+      rc=1
+    fi
+  done
+  return "$rc"
+}
+
 # Every check, one line each. Returns 1 when any line is a FAIL.
 check_all() {
   local k rc=0
@@ -181,6 +204,7 @@ check_all() {
   check_dir "$IMAGE_DIR" 700 || rc=1
   check_dir "$SLOT_ROOT" 755 || rc=1
   free_check 0 || rc=1
+  check_unconfigured_slots || rc=1
   for ((k = 0; k < SLOT_COUNT; k++)); do
     check_slot "$k" || rc=1
   done
@@ -228,6 +252,7 @@ apply() {
   [ -f "$FSTAB" ] || die "fstab not found: $FSTAB"
 
   # Everything is judged before anything changes.
+  check_unconfigured_slots || failed=1
   for ((i = 0; i < 3; i++)); do
     if [ -e "${dirs[i]}" ] || [ -L "${dirs[i]}" ]; then
       check_dir "${dirs[i]}" "${modes[i]}" || failed=1

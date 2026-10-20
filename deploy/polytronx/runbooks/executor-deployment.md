@@ -10,14 +10,15 @@ been run against a host. CI starts no sandbox.
   in `pins.env`. Runs as `node`. Docker CLI only. No socket or secret in the image.
 - `compose.executor.yml`: one service. Only this service mounts the Docker socket. It binds the
   workspace slot root, `/srv/vps-ws/slots`, at the same path. The port is published on
-  `127.0.0.1:8787` only. Sixteen slots, the state file `executor-state.db` and the required
-  `VPS_EXECUTOR_CONTROL_PLANE_URL` are fixed in the file; there is no workspace TTL. Read-only root
+  `127.0.0.1:8787` only. The state file `executor-state.db` and required
+  `VPS_EXECUTOR_CONTROL_PLANE_URL` are fixed in the file. The slot count is
+  configurable 3-16 via `EXECUTOR_WORKSPACE_SLOTS` (default 16). Read-only root
   filesystem, all capabilities dropped, `no-new-privileges`, CPU and memory limits (defaults 1 CPU
   and 512m, overridable). Secrets come from `executor.env` through `env_file`.
 - Sandboxes (`docker.ts`): `--runtime runsc`, `--cpus` and `--memory` from the release file, swap
   equal to memory, 512 pids, one bind mount (the sandbox's workspace slot at `/workspace`), no
   published ports, no socket.
-- `workspace-slots.sh`: one-time host setup of the sixteen workspace slots as root. Its `--check` is
+- `workspace-slots.sh`: one-time host setup of the configured workspace slots as root. Its `--check` is
   read-only and runs inside preflight.
 - `preflight-executor.sh` (read-only) and `deploy-executor.sh` (refuses without
   `--confirm polytronx-executor`).
@@ -25,7 +26,7 @@ been run against a host. CI starts no sandbox.
   - `verify`: pin and overlay check, `bash -n` on `deploy/polytronx/*.sh`, deployment guard tests.
   - `vps-executor`: Dockerfile `NODE_IMAGE` matches `pins.env`, executor typecheck and tests,
     control-plane admission and VPS-provider tests (fakes only).
-  - `compose-render`: renders the executor with placeholders, checks the loopback port, sixteen slots,
+  - `compose-render`: renders the executor with placeholders, checks the loopback port, default sixteen slots,
     the state file, the control-plane URL, user, read-only root, capabilities and limits, and fails
     closed without `VPS_EXECUTOR_CONTROL_PLANE_URL`.
   - `images`: builds the executor image, runs it with no runtime and expects 503, exports
@@ -83,9 +84,13 @@ been run against a host. CI starts no sandbox.
    `VPS_EXECUTOR_URL=https://172.235.26.148:19443`. Send them over a secure channel. Neither value
    goes in git, chat, or `executor-release.env`.
 
-   Workspace slots, once, before preflight: `sudo bash deploy/polytronx/workspace-slots.sh --check`,
-   then `--apply`, then `--check` again. The steps, the boot order and the rollback are in
-   [executor-host.md](executor-host.md), section 1, step 7.
+   Workspace slots, once, before preflight: choose the host count before first
+   setup (for example `EXECUTOR_WORKSPACE_SLOTS=4` on a sufficiently provisioned
+   smaller host). Run `sudo env EXECUTOR_WORKSPACE_SLOTS=4 bash
+   deploy/polytronx/workspace-slots.sh --check`, then `--apply`, then `--check`
+   again with the same count. Put `EXECUTOR_WORKSPACE_SLOTS=4` in
+   `executor-release.env` too. The no-shrink rule, space arithmetic and boot
+   order are in [executor-host.md](executor-host.md), section 1, step 7.
 
 ## Release (operator)
 
@@ -94,7 +99,8 @@ been run against a host. CI starts no sandbox.
 9. Write `executor-release.env` (keys in [executor-host.md](executor-host.md) §2). Preflight
    requires `EXECUTOR_IMAGE`, `EXECUTOR_IMAGE_ID`, `VPS_EXECUTOR_CONTROL_PLANE_URL` (https),
    `EXECUTOR_SANDBOX_IMAGE`, `EXECUTOR_SANDBOX_CPUS`, `EXECUTOR_SANDBOX_MEMORY`,
-   `EXECUTOR_MAX_ACTIVE_SANDBOXES` and `POLYTRONX_SECRETS_DIR`. It also requires the sandbox network
+   `EXECUTOR_MAX_ACTIVE_SANDBOXES` and `POLYTRONX_SECRETS_DIR`. Optional
+   `EXECUTOR_WORKSPACE_SLOTS` must match the provisioned host count. It also requires the sandbox network
    check to pass. Do not set `DOCKER_GID`; the scripts export it.
 10. Preflight:
     `sudo bash deploy/polytronx/preflight-executor.sh --release <file> --secrets-dir <dir>`. Every

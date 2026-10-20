@@ -195,7 +195,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # Workspace slots: the bounded storage behind each sandbox's /workspace. workspace-slots.sh --check
-# reads the six images, their mounts and their fstab lines. It changes nothing; its lines print as they are.
+# reads the configured number of images, their mounts and their fstab lines. It changes
+# nothing. EXECUTOR_WORKSPACE_SLOTS comes from the loaded release file (default: 16).
 # ---------------------------------------------------------------------------
 slots_ok=1
 slots_report="$(bash "$DEPLOY_DIR/workspace-slots.sh" --check 2>&1)" || slots_ok=0
