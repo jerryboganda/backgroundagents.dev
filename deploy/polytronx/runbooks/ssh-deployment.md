@@ -60,6 +60,24 @@ The four files are `bg_dashboard_ci`, `bg_dashboard_ci.pub`, `bg_executor_ci` an
 GitHub environment secret. They are never committed, never pasted into a chat, and never written
 into a deployment file.
 
+The jump host the executor deployment travels through needs a third key of its own, for the reason
+section 7 gives:
+
+```bash
+ssh-keygen -t ed25519 -a 100 -f ~/.ssh/bg_jump_ci -C "backgroundagents-executor-jump"
+```
+
+Its public key goes on the dashboard host, and the dashboard host's deployment account accepts it
+for one thing only: forwarding to the executor's SSH port. The line in
+`/home/deploy/.ssh/authorized_keys` on the dashboard host is:
+
+```
+no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,permitopen="172.235.26.148:22",command="/bin/false" ssh-ed25519 <the jump key's public key>
+```
+
+The options say what the key may do: no terminal, no agent, no X11, no command, and one address and
+port it may forward to. The executor's own key never reaches the dashboard host.
+
 ## 2. The deployment account on each host
 
 Each host gets one account that the deployment key logs in as. It is not a human login.
@@ -169,9 +187,11 @@ For both environments:
    `refs/heads/main`, so a mistake in the rule is caught by the run.
 2. **Required reviewers**: enable it. The deployment waits for the approval.
 3. **Deployment branch and tag filters**: keep `main` and nothing else.
-4. **Environment secrets**: only `SSH_PRIVATE_KEY`. Nothing else belongs here.
-5. **Environment variables**: the six names above. They are not secrets, and they are what the run
-   prints when it refuses to start.
+4. **Environment secrets**: the dashboard environment holds only `SSH_PRIVATE_KEY`. The executor
+   environment holds `SSH_PRIVATE_KEY` and, when the executor is reached through the jump host,
+   `SSH_JUMP_PRIVATE_KEY`. Nothing else belongs here.
+5. **Environment variables**: the names above, and the jump host's five for the executor
+   environment. They are not secrets, and they are what the run prints when it refuses to start.
 
 The workflows themselves are the least-privilege part: `permissions: contents: read`, no
 `pull_request` or `push` trigger, and no third-party action. The key is written into the runner's
@@ -338,26 +358,29 @@ already allows the port.
 The executor host is replaced every one or two months. Its credentials are replaced with it, and the
 dashboard's key is not touched.
 
-1. Drain the workloads: stop the sessions through the control plane, and let the sandboxes stop. The
+1. Update the jump host's forwarding rule: the `permitopen` address on the dashboard host names the
+   old executor, so it has to name the new one. The public key of the new jump key goes in the same
+   line.
+2. Drain the workloads: stop the sessions through the control plane, and let the sandboxes stop. The
    retained workspaces are released by the three-day timer, or by the janitor.
-2. Generate a new key pair for the new host:
+3. Generate a new key pair for the new host:
    ```bash
    ssh-keygen -t ed25519 -a 100 -f ~/.ssh/bg_executor_ci -C "backgroundagents-executor-actions"
    ```
-3. Install the new public key on the new host, as the `deploy` account's `authorized_keys` entry,
+4. Install the new public key on the new host, as the `deploy` account's `authorized_keys` entry,
    and install the entry point and the sudoers rule from section 6.
-4. Read the new host's fingerprint from its console and check the known hosts file against it, as in
+5. Read the new host's fingerprint from its console and check the known hosts file against it, as in
    section 3.
-5. Replace the `executor-production` environment's secret and variables: the new `SSH_PRIVATE_KEY`,
+6. Replace the `executor-production` environment's secret and variables: the new `SSH_PRIVATE_KEY`,
    the new `SSH_HOST`, the new `SSH_KNOWN_HOSTS` and the new `SSH_HOST_FINGERPRINT`.
-6. Run the executor workflow with `deploy` set. It stops after the preflight first, so run it that
+7. Run the executor workflow with `deploy` set. It stops after the preflight first, so run it that
    way once.
-7. Update the dashboard host's executor settings: the control-plane URL in
+8. Update the dashboard host's executor settings: the control-plane URL in
    `secrets/control-plane.env`, and the executor's public CA certificate at
    `/opt/polytronx/openinspect/trust/executor-edge-ca.crt` (the `ca.crt` only, never `ca.key`, mode
    0644). The private edge in `runbooks/private-edge.md` admits the dashboard address only; a new
    executor address needs the new edge's own certificate.
-8. Revoke the old host's key when the new one is healthy: remove its `authorized_keys` entry, and
+9. Revoke the old host's key when the new one is healthy: remove its `authorized_keys` entry, and
    delete the old host.
 
 Until step 7 is done, the dashboard host still points at the old executor and its sessions fail. Do
