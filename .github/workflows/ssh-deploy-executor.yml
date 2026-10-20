@@ -113,7 +113,7 @@ jobs:
           git -c core.autocrlf=false -c core.eol=lf archive --format=tar HEAD \
             packages/vps-executor deploy/polytronx |
             ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "tar -xf - -C '$staged'"
-          echo "staged=$staged" >>"$GITHUB_ENV"
+          echo "STAGED=$staged" >>"$GITHUB_ENV"
 
       - name: Deploy on the host
         run: |

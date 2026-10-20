@@ -141,6 +141,16 @@ test("each deployment removes the key when the job ends", () => {
   assert.doesNotMatch(action, /rm -f "\$RUNNER_TEMP\/polytronx-ssh\/id_ed25519"/);
 });
 
+test("each deployment reads the staged path under the name it writes", () => {
+  // The runner's environment is case sensitive, so a name that is written in one case
+  // and read in another leaves the step with an unbound variable.
+  for (const workflow of workflows) {
+    assert.match(workflow.text, /echo "STAGED=\$staged" >>"\$GITHUB_ENV"/);
+    assert.match(workflow.text, /--staged '\$STAGED'/);
+    assert.doesNotMatch(workflow.text, /--staged '\$staged'/);
+  }
+});
+
 test("the SSH setup keeps the host key check on and the key alone", () => {
   assert.match(action, /StrictHostKeyChecking yes/);
   assert.match(action, /IdentitiesOnly yes/);
