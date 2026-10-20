@@ -34,10 +34,6 @@ jobs:
           node-version-file: .nvmrc
       - name: Install locked formatting tools
         run: npm ci
-      - name: Export proposed formatting for source commit
-        run: |
-          npx --no-install prettier --write deploy/polytronx/private-executor-edge.test.mjs deploy/polytronx/runbooks/private-edge.md deploy/polytronx/runbooks/executor-rotation.md
-          node -e 'const fs = require("node:fs"); for (const f of process.argv.slice(1)) console.log("FORMATTED_SOURCE="+JSON.stringify({path:f,content:fs.readFileSync(f,"utf8")}));' deploy/polytronx/private-executor-edge.test.mjs deploy/polytronx/runbooks/private-edge.md deploy/polytronx/runbooks/executor-rotation.md
       - name: Check formatting of changed assets
         run: npx --no-install prettier --check deploy/polytronx/private-executor-edge.test.mjs deploy/polytronx/runbooks/private-edge.md deploy/polytronx/runbooks/executor-rotation.md .github/workflows/vps-edge-contract.yml
       - name: Shell syntax (does not modify the host)
