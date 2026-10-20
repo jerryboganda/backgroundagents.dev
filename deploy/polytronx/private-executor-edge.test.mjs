@@ -1048,7 +1048,6 @@ describe("sandbox network", () => {
   });
 });
 
-
 describe("replaceable VPS edge endpoints", () => {
   it("accepts explicitly configured unicast IPv4 addresses without weakening the edge policy", () => {
     const sb = edgeSandbox();
@@ -1069,9 +1068,17 @@ describe("replaceable VPS edge endpoints", () => {
 
   it("rejects invalid or unsafe executor edge addresses before touching host state", () => {
     for (const invalid of [
-      "", "0.0.0.0", "127.0.0.1", "169.254.1.10", "224.0.0.1",
-      "255.255.255.255", "192.168.001.1", "192.168.1.256", 
-      "example.com", "192.0.2.1/32", "192.0.2.1;echo hacked",
+      "",
+      "0.0.0.0",
+      "127.0.0.1",
+      "169.254.1.10",
+      "224.0.0.1",
+      "255.255.255.255",
+      "192.168.001.1",
+      "192.168.1.256",
+      "example.com",
+      "192.0.2.1/32",
+      "192.0.2.1;echo hacked",
     ]) {
       const sb = edgeSandbox();
       const root = bashRoot(sb);
@@ -1079,7 +1086,11 @@ describe("replaceable VPS edge endpoints", () => {
         POLYTRONX_EXECUTOR_EDGE_ADDRESS: invalid,
       });
       assert.equal(result.status, 1, invalid);
-      assert.match(result.stderr, /POLYTRONX_EXECUTOR_EDGE_ADDRESS must be a unicast IPv4 host address/, invalid);
+      assert.match(
+        result.stderr,
+        /POLYTRONX_EXECUTOR_EDGE_ADDRESS must be a unicast IPv4 host address/,
+        invalid
+      );
       assert.equal(existsSync(`${sb.root}/edge`), false, invalid);
       assert.equal(stubCalls(sb).length, 0, invalid);
     }
@@ -1087,9 +1098,16 @@ describe("replaceable VPS edge endpoints", () => {
 
   it("rejects invalid or unsafe dashboard sources before rendering the firewall policy", () => {
     for (const invalid of [
-      "", "0.0.0.0", "127.0.0.1", "169.254.100.1",
-      "240.0.0.1", "198.51.100.999", "010.0.0.1",
-      "example.net", "203.0.113.10/24", "203.0.113.1 & echo hacked",
+      "",
+      "0.0.0.0",
+      "127.0.0.1",
+      "169.254.100.1",
+      "240.0.0.1",
+      "198.51.100.999",
+      "010.0.0.1",
+      "example.net",
+      "203.0.113.10/24",
+      "203.0.113.1 & echo hacked",
     ]) {
       const sb = edgeSandbox();
       const root = bashRoot(sb);
@@ -1097,7 +1115,11 @@ describe("replaceable VPS edge endpoints", () => {
         POLYTRONX_DASHBOARD_SOURCE_IPV4: invalid,
       });
       assert.equal(result.status, 1, invalid);
-      assert.match(result.stderr, /POLYTRONX_DASHBOARD_SOURCE_IPV4 must be a unicast IPv4 host address/, invalid);
+      assert.match(
+        result.stderr,
+        /POLYTRONX_DASHBOARD_SOURCE_IPV4 must be a unicast IPv4 host address/,
+        invalid
+      );
       assert.equal(existsSync(`${sb.root}/edge`), false, invalid);
     }
   });
