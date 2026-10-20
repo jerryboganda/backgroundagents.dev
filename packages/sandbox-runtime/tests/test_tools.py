@@ -65,6 +65,20 @@ async def test_spawn_child_posts_to_children_with_the_sandbox_token(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_spawn_child_forwards_operator_profile_role(tmp_path: Path) -> None:
+    tools, seen = _tools(tmp_path, lambda _r: httpx.Response(201, json={"sessionId": "child-3"}))
+    result = await tools.spawn_child(
+        {"title": "Review", "prompt": "Review for regressions", "role": "reviewer"}
+    )
+    assert json.loads(seen[0].content) == {
+        "title": "Review",
+        "prompt": "Review for regressions",
+        "role": "reviewer",
+    }
+    assert "child-3" in _text(result)
+
+
+@pytest.mark.asyncio
 async def test_spawn_child_forwards_explicit_harness(tmp_path: Path) -> None:
     tools, seen = _tools(tmp_path, lambda _r: httpx.Response(201, json={"sessionId": "child-2"}))
     result = await tools.spawn_child(
