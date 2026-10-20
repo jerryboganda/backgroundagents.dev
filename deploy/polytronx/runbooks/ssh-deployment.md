@@ -227,6 +227,30 @@ which is only deployed from `main` after review.
 The operator's own path (`scripts/ship-dashboard.sh`, `scripts/ship-executor.sh`) runs the same host
 scripts, so there is one deployment and one set of checks.
 
+### The entry point is a bootstrap copy
+
+The copy in `/usr/local/sbin` is the first thing that runs, and it installs the tree that carries
+the rest of the deployment. When the script changes how it starts, install the new copy on the host
+as well, or the host keeps running the old one:
+
+```bash
+sudo install -m 0755 -o root -g root deploy/polytronx/host-dashboard-deploy.sh /usr/local/sbin/polytronx-dashboard-deploy
+```
+
+### The deployment account and fail2ban
+
+A failed attempt by the deployment account is a failed attempt by an account whose address changes
+with every runner. On a host that runs fail2ban, the jail must not ban that address, or the next run
+cannot connect at all. Give the jail the account as an exception:
+
+```
+# /etc/fail2ban/jail.d/zz-polytronx-deploy-user.conf
+[sshd]
+ignoreuser = deploy
+```
+
+Then `sudo systemctl restart fail2ban`. Every other account keeps the default rule.
+
 ## 7. Running a deployment
 
 Both workflows are manual. In the Actions tab, run **Deploy the dashboard over SSH** or **Deploy the
@@ -266,6 +290,24 @@ target on both hosts.
 
 The deployment is a manual production change. Review the diff of the commit the run deploys before
 it starts, and watch the run.
+
+### The runner has to be able to reach the host
+
+The workflow connects from the runner's address, over the public internet. The executor host on
+2026-10-20 answered a GitHub runner on port 22 with a timeout, while the dashboard host and the
+operator's own machine connected to the same host without trouble: the block was above the host, not
+on it, because the host's own firewall allows port 22 from anywhere and sshd was listening.
+
+Two ways to fix that, in the order to try them:
+
+1. Open the provider's firewall for the runner's addresses. The host's own firewall already allows
+   the port; nothing else on the host has to change.
+2. Run the executor workflow from a runner that can reach the host: a self-hosted runner on the
+   dashboard host, which already reaches the executor.
+
+Until then, the executor deploys through the operator's path,
+`bash scripts/ship-executor.sh linode-executor`, which runs the same host script and the same checks
+as the workflow.
 
 ## 8. Replacing the executor host
 
