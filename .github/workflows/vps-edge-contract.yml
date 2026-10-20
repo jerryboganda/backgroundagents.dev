@@ -32,6 +32,10 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
+      - name: Install locked formatting tools
+        run: npm ci
+      - name: Check formatting of changed assets
+        run: npx --no-install prettier --check deploy/polytronx/private-executor-edge.test.mjs deploy/polytronx/runbooks/private-edge.md deploy/polytronx/runbooks/executor-rotation.md .github/workflows/vps-edge-contract.yml
       - name: Shell syntax (does not modify the host)
         run: bash -n deploy/polytronx/private-executor-edge.sh
       - name: Run fully stubbed edge/firewall/certificate contracts
