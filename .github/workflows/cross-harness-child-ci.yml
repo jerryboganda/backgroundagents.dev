@@ -69,6 +69,13 @@ jobs:
           src/agent-role-profiles.test.ts
           src/router.spawn-child.test.ts
 
+
+      - name: Diagnose remaining role-test formatting
+        if: failure()
+        run: |
+          npx prettier --write packages/control-plane/src/agent-role-profiles.test.ts
+          git diff -- packages/control-plane/src/agent-role-profiles.test.ts
+
   python:
     name: Native harness tools
     runs-on: ubuntu-latest
