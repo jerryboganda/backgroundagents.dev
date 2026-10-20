@@ -1047,3 +1047,98 @@ describe("sandbox network", () => {
     assert.ok(executor.includes(`const RESOLV_CONF_SOURCE = "${shellDefault}";`));
   });
 });
+
+describe("replaceable VPS edge endpoints", () => {
+  it("accepts explicitly configured unicast IPv4 addresses without weakening the edge policy", () => {
+    const sb = edgeSandbox();
+    const root = bashRoot(sb);
+    const result = edge(sb, root, ["render"], {
+      POLYTRONX_EXECUTOR_EDGE_ADDRESS: "198.51.100.42",
+      POLYTRONX_DASHBOARD_SOURCE_IPV4: "203.0.113.15",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^https:\/\/198\.51\.100\.42:19443 \{$/m);
+    assert.match(result.stdout, /^\tbind 198\.51\.100\.42$/m);
+    assert.match(result.stdout, /^\tdefault_sni 198\.51\.100\.42$/m);
+    assert.match(result.stdout, /^\t@dashboard remote_ip 203\.0\.113\.15$/m);
+    assert.match(result.stdout, /^\t\treverse_proxy 127\.0\.0\.1:8787$/m);
+    assert.doesNotMatch(result.stdout, /http:\/\/|skip_verify|insecure/);
+    assert.equal(existsSync(`${sb.root}/edge`), false);
+  });
+
+  it("rejects invalid or unsafe executor edge addresses before touching host state", () => {
+    for (const invalid of [
+      "",
+      "0.0.0.0",
+      "127.0.0.1",
+      "169.254.1.10",
+      "224.0.0.1",
+      "255.255.255.255",
+      "192.168.001.1",
+      "192.168.1.256",
+      "example.com",
+      "192.0.2.1/32",
+      "192.0.2.1;echo hacked",
+    ]) {
+      const sb = edgeSandbox();
+      const root = bashRoot(sb);
+      const result = edge(sb, root, ["apply"], {
+        POLYTRONX_EXECUTOR_EDGE_ADDRESS: invalid,
+      });
+      assert.equal(result.status, 1, invalid);
+      assert.match(
+        result.stderr,
+        /POLYTRONX_EXECUTOR_EDGE_ADDRESS must be a unicast IPv4 host address/,
+        invalid
+      );
+      assert.equal(existsSync(`${sb.root}/edge`), false, invalid);
+      assert.equal(stubCalls(sb).length, 0, invalid);
+    }
+  });
+
+  it("rejects invalid or unsafe dashboard sources before rendering the firewall policy", () => {
+    for (const invalid of [
+      "",
+      "0.0.0.0",
+      "127.0.0.1",
+      "169.254.100.1",
+      "240.0.0.1",
+      "198.51.100.999",
+      "010.0.0.1",
+      "example.net",
+      "203.0.113.10/24",
+      "203.0.113.1 & echo hacked",
+    ]) {
+      const sb = edgeSandbox();
+      const root = bashRoot(sb);
+      const result = edge(sb, root, ["render"], {
+        POLYTRONX_DASHBOARD_SOURCE_IPV4: invalid,
+      });
+      assert.equal(result.status, 1, invalid);
+      assert.match(
+        result.stderr,
+        /POLYTRONX_DASHBOARD_SOURCE_IPV4 must be a unicast IPv4 host address/,
+        invalid
+      );
+      assert.equal(existsSync(`${sb.root}/edge`), false, invalid);
+    }
+  });
+
+  it("refuses to reuse an old TLS server certificate when the executor IP changes", () => {
+    const sb = edgeSandbox();
+    const root = bashRoot(sb);
+    mkdirSync(`${sb.root}/edge/tls`, { recursive: true });
+    mkdirSync(`${sb.root}/edge-ca`);
+    for (const file of ["ca.key", "ca.crt"]) writeFileSync(`${sb.root}/edge-ca/${file}`, "old\n");
+    for (const file of ["server.key", "server.crt"])
+      writeFileSync(`${sb.root}/edge/tls/${file}`, "old\n");
+    const result = edge(sb, root, applyArgs(root), {
+      POLYTRONX_EXECUTOR_EDGE_ADDRESS: "198.51.100.42",
+      STUB_HOST_IP: "198.51.100.42",
+      STUB_SAN: "172.235.26.148",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /lacks the IP SAN 198\.51\.100\.42/);
+    assert.equal(readFileSync(`${sb.root}/edge/tls/server.key`, "utf8"), "old\n");
+  });
+});

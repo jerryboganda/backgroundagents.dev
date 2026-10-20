@@ -1,0 +1,42 @@
+name: Replaceable VPS edge contract
+
+on:
+  pull_request:
+    paths:
+      - "deploy/polytronx/private-executor-edge.sh"
+      - "deploy/polytronx/private-executor-edge.test.mjs"
+      - "deploy/polytronx/runbooks/private-edge.md"
+      - "deploy/polytronx/runbooks/executor-rotation.md"
+      - ".github/workflows/vps-edge-contract.yml"
+      - ".github/workflows/polytronx-openinspect.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-contract:
+    name: Edge endpoint validation and sandboxed firewall/TLS tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install locked formatting tools
+        run: npm ci
+      - name: Check formatting of changed assets
+        run: npx --no-install prettier --check deploy/polytronx/private-executor-edge.test.mjs deploy/polytronx/runbooks/private-edge.md deploy/polytronx/runbooks/executor-rotation.md .github/workflows/vps-edge-contract.yml
+      - name: Shell syntax (does not modify the host)
+        run: bash -n deploy/polytronx/private-executor-edge.sh
+      - name: Run fully stubbed edge/firewall/certificate contracts
+        run: node --test deploy/polytronx/private-executor-edge.test.mjs

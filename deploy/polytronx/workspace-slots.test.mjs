@@ -34,7 +34,7 @@ const DEFAULT_FSTAB = "UUID=root / ext4 defaults 0 1\nproc /proc proc defaults 0
 const MUTATING = /^(fallocate|mkfs\.ext4|mount|chmod|systemctl)\b/;
 
 /** A scratch host: stub tools, an fstab and stub state. `freeGiB` is what df reports for the images. */
-function scratchHost({ freeGiB = 200 } = {}) {
+function scratchHost({ freeGiB = 200, slots } = {}) {
   const sb = makeSandbox();
   mkdirSync(join(sb.root, "srv")); // /srv exists on the host; the script creates only vps-ws below it
   for (const name of TOOLS) {
@@ -57,6 +57,7 @@ function scratchHost({ freeGiB = 200 } = {}) {
     HT_STATE: host.state,
     HT_FREE_KB: String(freeGiB * 1024 * 1024),
   };
+  if (slots !== undefined) host.env.EXECUTOR_WORKSPACE_SLOTS = String(slots);
   return host;
 }
 
@@ -111,6 +112,24 @@ describe("workspace-slots.sh --apply on a new host", () => {
     );
   });
 
+  it("provisions four bounded slots on a smaller host without creating the other twelve", () => {
+    const h = scratchHost({ freeGiB: 90, slots: 4 });
+    const result = run(h, ["--apply"]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const calls = stubCalls(h.sb);
+    for (const k of [0, 1, 2, 3]) {
+      assert.ok(calls.includes(`fallocate -l 10G ${image(h, k)}`));
+      assert.match(result.stdout, new RegExp(`PASS  slot ${k}: `));
+    }
+    for (const k of SLOTS.slice(4)) {
+      assert.ok(!calls.includes(`fallocate -l 10G ${image(h, k)}`));
+      assert.ok(!readFileSync(h.fstab, "utf8").includes(slotDir(h, k) + " "));
+    }
+    resetLog(h);
+    assert.equal(run(h, ["--check"]).status, 0);
+    assert.deepEqual(mutations(h), []);
+  });
+
   it("is idempotent: a second run changes nothing, including fstab", () => {
     const h = scratchHost();
     assert.equal(run(h, ["--apply"]).status, 0);
@@ -124,6 +143,42 @@ describe("workspace-slots.sh --apply on a new host", () => {
 });
 
 describe("workspace-slots.sh --apply refuses and changes nothing", () => {
+  it("refuses an invalid slot count before changing files, mounts or fstab", () => {
+    for (const slots of ["0", "2", "17", "4.0", "04", "unlimited", "-1"]) {
+      const h = scratchHost({ slots });
+      const result = run(h, ["--apply"]);
+      assert.equal(result.status, 2, `slots=${slots}: ${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /EXECUTOR_WORKSPACE_SLOTS must be an integer from 3 through 16/);
+      assert.deepEqual(mutations(h), [], `slots=${slots} must not mutate`);
+      assert.equal(readFileSync(h.fstab, "utf8"), DEFAULT_FSTAB);
+    }
+  });
+
+  it("rejects shrinking a provisioned host and preserves every prior slot", () => {
+    const h = scratchHost();
+    assert.equal(run(h, ["--apply"]).status, 0);
+    const fstab = readFileSync(h.fstab, "utf8");
+    resetLog(h);
+    h.env.EXECUTOR_WORKSPACE_SLOTS = "4";
+    const result = run(h, ["--apply"]);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /FAIL {2}slot 4 exists outside configured EXECUTOR_WORKSPACE_SLOTS=4/);
+    assert.deepEqual(mutations(h), []);
+    assert.equal(readFileSync(h.fstab, "utf8"), fstab);
+    const check = run(h, ["--check"]);
+    assert.equal(check.status, 1);
+    assert.match(check.stdout, /FAIL {2}slot 4 exists outside configured EXECUTOR_WORKSPACE_SLOTS=4/);
+  });
+
+  it("refuses a smaller host without enough room for its slots and 30 GiB reserve", () => {
+    const h = scratchHost({ freeGiB: 79, slots: 5 });
+    const result = run(h, ["--apply"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /30 GiB must stay free/);
+    assert.deepEqual(stubCalls(h.sb).filter((line) => /^(fallocate|mkfs\.ext4|mount)\b/.test(line)), []);
+    assert.equal(readFileSync(h.fstab, "utf8"), DEFAULT_FSTAB);
+  });
+
   it("refuses an existing image that is not ext4, and never formats it", () => {
     const h = scratchHost();
     mkdirSync(dirname(image(h, 2)), { recursive: true });
@@ -255,15 +310,15 @@ describe("the executor's view of the slots", () => {
     }
   });
 
-  it("fixes the sixteen slots, the state file and the trusted control-plane URL, with only the retained-workspace release timer, and publishes the API on loopback only", () => {
+  it("shares the configurable host slot count, state file and trusted URL, and publishes the API on loopback only", () => {
     assert.match(compose, /VPS_EXECUTOR_WORKSPACE_ROOT: \/srv\/vps-ws\/slots/);
-    assert.match(compose, /VPS_EXECUTOR_WORKSPACE_SLOTS: "16"/);
+    assert.match(compose, /VPS_EXECUTOR_WORKSPACE_SLOTS: "\$\{EXECUTOR_WORKSPACE_SLOTS:-16\}"/);
     assert.match(compose, /VPS_EXECUTOR_STATE_FILE: \/var\/lib\/vps-executor\/executor-state\.db/);
     assert.match(compose, /VPS_EXECUTOR_CONTROL_PLANE_URL: \$\{VPS_EXECUTOR_CONTROL_PLANE_URL:\?/);
     assert.match(compose, /- "127\.0\.0\.1:8787:8787"/);
     // No reset timer of the removed kind. The one timer releases a session's retained workspace long after it stopped,
     // and never one a running sandbox holds: the executor package's tests cover that.
-    assert.doesNotMatch(compose, /RESET_TTL|\bEXECUTOR_(BIND_ADDRESS|WORKSPACE_SLOTS)\b/);
+    assert.doesNotMatch(compose, /RESET_TTL|\bEXECUTOR_BIND_ADDRESS\b/);
     assert.match(
       compose,
       /VPS_EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS: \$\{EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS:-259200\}/
@@ -280,6 +335,7 @@ describe("the executor's view of the slots", () => {
     assert.doesNotMatch(template, /TTL|\bEXECUTOR_(BIND_ADDRESS|WORKSPACE_SLOTS)\b/);
     const preflight = read("preflight-executor.sh");
     assert.match(preflight, /workspace-slots\.sh" --check/);
+    assert.match(preflight, /load_release_file "\$RELEASE_FILE"/);
     assert.match(preflight, /sandbox-network\.sh" check/);
   });
 });

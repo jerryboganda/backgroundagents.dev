@@ -172,6 +172,24 @@ describe("boundary schemas", () => {
     });
   });
 
+  describe("spawnChildSessionRequestSchema", () => {
+    it("accepts a child harness override and preserves omission", () => {
+      const input = { title: "Review", prompt: "Review the PR", harness: "claude" };
+      expect(spawnChildSessionRequestSchema.parse(input)).toEqual(input);
+      expect(
+        spawnChildSessionRequestSchema.parse({
+          title: "Review",
+          prompt: "Review the PR",
+        })
+      ).not.toHaveProperty("harness");
+    });
+
+    it("rejects unknown child harness identifiers", () => {
+      const input = { title: "Review", prompt: "Review the PR", harness: "unavailable" };
+      expect(spawnChildSessionRequestSchema.safeParse(input).success).toBe(false);
+    });
+  });
+
   describe("createSessionRequestSchema", () => {
     it("parses a valid session creation request", () => {
       const result = createSessionRequestSchema.safeParse({
@@ -1381,6 +1399,22 @@ describe("boundary schemas", () => {
   });
 
   describe("spawnChildSessionRequestSchema", () => {
+    it("accepts configured child roles and rejects unknown roles", () => {
+      const valid = spawnChildSessionRequestSchema.safeParse({
+        title: "Analyze",
+        prompt: "Explore the repository",
+        role: "explorer",
+        harness: "opencode",
+      });
+      expect(valid.success).toBe(true);
+      const invalid = spawnChildSessionRequestSchema.safeParse({
+        title: "Escalate",
+        prompt: "Try to become administrator",
+        role: "administrator",
+      });
+      expect(invalid.success).toBe(false);
+    });
+
     it("parses a valid child session request", () => {
       const result = spawnChildSessionRequestSchema.safeParse({
         title: "Investigate failure",

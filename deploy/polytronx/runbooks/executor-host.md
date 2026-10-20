@@ -11,11 +11,11 @@ Nothing in this runbook has been run against either host. Each step is for the o
 | Asset                                         | Role                                                                                                                                                                                                     |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/vps-executor/Dockerfile`            | Executor image. Node 24 base pinned by digest, the same value as `NODE_IMAGE` in `pins.env`. Non-root `node` user. Docker CLI.                                                                           |
-| `deploy/polytronx/compose.executor.yml`       | One service. Port published on `127.0.0.1:8787` only. Sixteen fixed workspace slots, state in `executor-state.db`, required trusted control-plane URL. Read-only root, all capabilities dropped, limits set. |
+| `deploy/polytronx/compose.executor.yml`       | One service. Port published on `127.0.0.1:8787` only. 3-16 workspace slots (16 by default), state in `executor-state.db`, required trusted control-plane URL. Read-only root, all capabilities dropped, limits set. |
 | `deploy/polytronx/sandbox-network.sh`         | `oi-sandbox`, owned iptables chains, and the owned boot unit `polytronx-sandbox-network.service`. See step 8 below.                                                                                      |
 | `deploy/polytronx/private-executor-edge.sh`   | Private HTTPS edge to the executor, pinned Caddy. See [private-edge.md](private-edge.md).                                                                                                                |
 | `deploy/polytronx/preflight-executor.sh`      | Read-only checks, run as root. Each line is PASS, WARN or FAIL.                                                                                                                                          |
-| `deploy/polytronx/workspace-slots.sh`         | One-time host setup of the sixteen workspace slots (`--apply`, as root). `--check` is read-only and runs inside preflight.                                                                                   |
+| `deploy/polytronx/workspace-slots.sh`         | One-time host setup of the configured workspace slots (`--apply`, as root). `--check` is read-only and runs inside preflight.                                                                                   |
 | `deploy/polytronx/deploy-executor.sh`         | Loads `executor.tar`, runs preflight, brings the project up, keeps `last-good.env`.                                                                                                                      |
 | `.github/workflows/polytronx-openinspect.yml` | `vps-executor` job: typecheck, executor tests, admission tests. `images` job builds, smoke-tests and exports `executor.tar`.                                                                             |
 
@@ -33,7 +33,7 @@ Nothing in this runbook has been run against either host. Each step is for the o
   HTTPS edge, which admits that one source ([private-edge.md](private-edge.md)).
 - Executor state is one SQLite file, `executor-state.db`, in the `executor-state` volume. Nothing
   evicts a running sandbox's workspace, and the old reset TTL stays removed. The one timer releases a stopped session's
-  retained workspace after `EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS` (three days by default), so the sixteen slots do not fill
+  retained workspace after `EXECUTOR_RETAINED_WORKSPACE_TTL_SECONDS` (three days by default), so the configured slots do not fill
   with sessions that never returned.
 - **Slot janitor (automatic).** Every five minutes, and at once when a create finds every slot taken, the executor
   frees what nothing can use: a retained workspace no session owns, and a reset that stopped half done. While fewer
@@ -67,19 +67,35 @@ Nothing in this runbook has been run against either host. Each step is for the o
 6. Sandbox image. Choose the image the sandboxes run, and pull it by digest on this host with
    `docker pull <name>@sha256:<digest>`. Preflight refuses an image without a digest, or one that is
    not on the host.
-7. Workspace slots, once, as root. Each sandbox's `/workspace` is one of sixteen 10 GiB ext4 images,
-   each mounted at `/srv/vps-ws/slots/<k>`. On a new host the first check shows FAIL lines; that is
-   expected.
+7. Workspace slots, once, as root. Each sandbox gets one of 3-16 10 GiB ext4
+   images mounted at `/srv/vps-ws/slots/<k>`. The default is 16. **Choose the count
+   before initial provisioning** and put the same optional setting in
+   `executor-release.env`, for example `EXECUTOR_WORKSPACE_SLOTS=4`.
 
+   On a new 4-slot host:
+
+   ```bash
+   sudo env EXECUTOR_WORKSPACE_SLOTS=4 bash deploy/polytronx/workspace-slots.sh --check
+   sudo env EXECUTOR_WORKSPACE_SLOTS=4 bash deploy/polytronx/workspace-slots.sh --apply
+   sudo env EXECUTOR_WORKSPACE_SLOTS=4 bash deploy/polytronx/workspace-slots.sh --check
    ```
-   sudo bash deploy/polytronx/workspace-slots.sh --check
-   sudo bash deploy/polytronx/workspace-slots.sh --apply
-   sudo bash deploy/polytronx/workspace-slots.sh --check
-   ```
+
+   Omit the environment variable for the default 16-slot host. The initial
+   `--check` fails before provisioning; that is expected. **Never decrease
+   the count after provisioning.** The script refuses any previously
+   provisioned higher slot, and the executor SQLite state will also refuse
+   fewer slots if it retains higher slot records. To increase the count,
+   run `--apply` with the new count to add missing slots. Preflight reads
+   `EXECUTOR_WORKSPACE_SLOTS` from the release file.
 
    `--apply` judges every slot before it changes an image or an fstab line. Then it:
    - creates each `/srv/vps-ws/images/slot-<k>.img` with `fallocate -l 10G` (root, mode 600). That
-     reserves 60 GiB, and it refuses unless 30 GiB stay free afterwards;
+     reserves 10 GiB per configured slot (160 GiB by default), and it refuses unless 30 GiB stay free afterwards;
+   A 4-slot host reserves **40 GiB** for workspace images and requires another
+   **30 GiB** free on the same filesystem after allocation (at least 70 GiB
+   before provisioning), plus separate room for Docker. The default 16-slot
+   host needs 160 GiB plus that 30 GiB reserve, not the older documented 60 GiB.
+
    - formats a new image only, with `mkfs.ext4 -F -m 0 -N 262144 -E root_owner=1000:1000`;
    - backs up `/etc/fstab`, then appends one line per slot:
      `<image> /srv/vps-ws/slots/<k> ext4 loop,nosuid,nodev,noatime,nofail,x-systemd.before=docker.service 0 0`.
@@ -131,8 +147,9 @@ Nothing in this runbook has been run against either host. Each step is for the o
    There is no bind setting: compose publishes the executor on `127.0.0.1:8787` only. The
    control-plane URL is required. Preflight fails on the placeholder and on anything that is not
    `https://`, and the executor refuses to start without it, so take it from the dashboard host's
-   reviewed configuration rather than guessing. The sixteen workspace slots and the executor state file
-   are fixed in `compose.executor.yml`. Optional: `EXECUTOR_CPUS` (default 1) and
+   reviewed configuration rather than guessing. The executor state-file path is fixed in
+   `compose.executor.yml`. The optional `EXECUTOR_WORKSPACE_SLOTS` count (3-16, default 16)
+   must match the host's provisioned slots and may not be decreased later. Optional: `EXECUTOR_CPUS` (default 1) and
    `EXECUTOR_MEM_LIMIT` (default 512m) limit the executor service itself. Optional too:
    `EXECUTOR_SANDBOX_MAX_LIFETIME_SECONDS` (default 7500, from 600 to 86400). The executor removes
    any sandbox running longer than that, and any owned container that has not been running for 10
@@ -181,7 +198,7 @@ the executor (open item 1). Operator-run. Create a sandbox only with the operato
 
 Workspace slots, on the host. Each command is read-only:
 
-- `sudo bash deploy/polytronx/workspace-slots.sh --check` prints sixteen PASS lines and exits 0.
+- `sudo env EXECUTOR_WORKSPACE_SLOTS=4 bash deploy/polytronx/workspace-slots.sh --check` (adjust to the configured count) prints one PASS per configured slot and exits 0. Omit the variable for 16.
 - `sudo bash deploy/polytronx/sandbox-network.sh check` prints `sandbox-network: no blockers`. Run
   it again after a reboot, without `apply`, to confirm the boot unit restored the rules.
 - `findmnt -no TARGET,FSTYPE,OPTIONS /srv/vps-ws/slots/0` shows `ext4`, with `nosuid,nodev,noatime`
@@ -193,10 +210,9 @@ Workspace slots, on the host. Each command is read-only:
 
 Reboot proof, operator, not yet run. Reboot the executor host, then, read-only:
 
-- `systemctl show -p After -- docker.service` lists `srv-vps\x2dws-slots-0.mount` and the other five
+- `systemctl show -p After -- docker.service` lists `srv-vps\x2dws-slots-0.mount` and the other configured
   slot mounts (`systemd-escape -p --suffix=mount /srv/vps-ws/slots/<k>` gives each name).
-- `sudo bash deploy/polytronx/workspace-slots.sh --check` prints sixteen PASS lines, before anyone
-  restarts the executor.
+- Run `workspace-slots.sh --check` with the configured count before anyone restarts the executor.
 - `sudo bash deploy/polytronx/sandbox-network.sh check` prints `sandbox-network: no blockers`.
 
 Edge gate, operator, not yet run. From the dashboard host, with the CA copy at the path
@@ -238,7 +254,7 @@ Destructive checks, on a test host or with the operator's go-ahead to create a s
   slot with `sudo umount /srv/vps-ws/slots/<k>`, never `-l`: umount fails while a container still
   uses the slot, and that failure is the protection. Unmounting keeps the image and its data.
   Restore `/etc/fstab` from the `/etc/fstab.polytronx-workspace-*.bak` that `--apply` wrote, or
-  delete the sixteen lines. No script deletes an image. Deleting one destroys that slot's data, so that
+  delete the configured slot lines. No script deletes an image. Deleting one destroys that slot's data, so that
   is the operator's call.
 
 ## 5. Open items before live use

@@ -13,6 +13,10 @@ ssh "$HOST" 'set -e; cd /opt/polytronx/executor
 TS=$(date +%Y%m%dT%H%M%S); IMG=open-inspect-vps-executor:ship-$TS
 docker build -q -t "$IMG" --label io.polytronx.node-image="$(grep -m1 "^ARG NODE_IMAGE=" build/vps-executor.new/Dockerfile | cut -d= -f2- | tr -d "\r")" build/vps-executor.new >/dev/null
 ID=$(docker image inspect "$IMG" --format "{{.Id}}")
+# Keep provisioning in sync with the count docker compose reads from the release file.
+# Extract a literal value; never source/evaluate release-file contents.
+slot_count=$(sed -n "s/^EXECUTOR_WORKSPACE_SLOTS=//p" executor-release.env | head -n 1)
+if [ -n "$slot_count" ]; then export EXECUTOR_WORKSPACE_SLOTS="$slot_count"; fi
 bash deploy/polytronx/workspace-slots.sh --check >/dev/null 2>&1 || bash deploy/polytronx/workspace-slots.sh --apply
 cp executor-release.env "executor-release.env.bak-$TS"
 sed -i "s|^EXECUTOR_IMAGE=.*|EXECUTOR_IMAGE=$IMG|; s|^EXECUTOR_IMAGE_ID=.*|EXECUTOR_IMAGE_ID=$ID|" executor-release.env
