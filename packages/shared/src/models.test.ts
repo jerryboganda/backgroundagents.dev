@@ -6,6 +6,7 @@ import {
   MODEL_CATALOG,
   MODEL_OPTIONS,
   MODEL_REASONING_CONFIG,
+  OPENCODE_REASONING_CONFIG,
   VALID_MODELS,
   applyModelPreferenceChanges,
   extractProviderAndModel,
@@ -170,8 +171,8 @@ describe("model utilities", () => {
     expect(defaultModels).toHaveLength(1);
     expect(DEFAULT_MODEL).toBe(defaultModels[0]?.id);
 
-    expect(MODEL_REASONING_CONFIG).toEqual(
-      Object.fromEntries(
+    expect(MODEL_REASONING_CONFIG).toEqual({
+      ...Object.fromEntries(
         catalogModels.flatMap((model) =>
           "reasoning" in model
             ? [
@@ -182,8 +183,9 @@ describe("model utilities", () => {
               ]
             : []
         )
-      )
-    );
+      ),
+      ...OPENCODE_REASONING_CONFIG,
+    });
   });
 
   it("keeps DEFAULT_MODEL valid", () => {
@@ -418,6 +420,9 @@ describe("model utilities", () => {
     expect(supportsReasoning("openai/gpt-5.6-terra")).toBe(true);
     expect(supportsReasoning("xai/grok-build-0.1")).toBe(false);
     expect(supportsReasoning("deepseek/deepseek-v4-flash")).toBe(false);
+    expect(supportsReasoning("opencode/beam-free")).toBe(true);
+    expect(supportsReasoning("opencode-go/glm-5.3")).toBe(true);
+    expect(supportsReasoning("opencode/big-pickle")).toBe(false);
     expect(supportsReasoning("invalid")).toBe(false);
 
     expect(getDefaultReasoningEffort("anthropic/claude-haiku-4-5")).toBe("max");
@@ -436,6 +441,8 @@ describe("model utilities", () => {
     expect(getDefaultReasoningEffort("openai/gpt-5.6-luna")).toBe("medium");
     expect(getDefaultReasoningEffort("xai/grok-build-0.1")).toBeUndefined();
     expect(getDefaultReasoningEffort("deepseek/deepseek-v4-pro")).toBeUndefined();
+    expect(getDefaultReasoningEffort("opencode/beam-free")).toBeUndefined();
+    expect(getDefaultReasoningEffort("opencode-go/gpt-5.6-luna")).toBeUndefined();
   });
 
   it("returns reasoning configurations for supported model families", () => {
@@ -518,6 +525,27 @@ describe("model utilities", () => {
     });
     expect(getReasoningConfig("xai/grok-build-0.1")).toBeUndefined();
     expect(getReasoningConfig("deepseek/deepseek-v4-flash")).toBeUndefined();
+    expect(getReasoningConfig("opencode/beam-free")).toEqual({
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      default: undefined,
+    });
+    expect(getReasoningConfig("opencode/glm-5.2")).toEqual({
+      efforts: ["high", "max"],
+      default: undefined,
+    });
+    expect(getReasoningConfig("opencode/nemotron-3.5-super-vl-free")).toEqual({
+      efforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
+      default: undefined,
+    });
+    expect(getReasoningConfig("opencode-go/gpt-5.6-luna")).toEqual({
+      efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      default: undefined,
+    });
+    expect(getReasoningConfig("opencode-go/hy4-preview")).toEqual({
+      efforts: ["none", "high"],
+      default: undefined,
+    });
+    expect(getReasoningConfig("opencode/big-pickle")).toBeUndefined();
   });
 
   it("validates reasoning efforts per model", () => {
@@ -558,6 +586,15 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("xai/grok-build-0.1", "high")).toBe(false);
     expect(isValidReasoningEffort("xai/grok-build-0.1", "xhigh")).toBe(false);
     expect(isValidReasoningEffort("deepseek/deepseek-v4-pro", "high")).toBe(false);
+    expect(isValidReasoningEffort("opencode/beam-free", "max")).toBe(true);
+    expect(isValidReasoningEffort("opencode/beam-free", "none")).toBe(false);
+    expect(isValidReasoningEffort("opencode/glm-5.2", "high")).toBe(true);
+    expect(isValidReasoningEffort("opencode/glm-5.2", "low")).toBe(false);
+    expect(isValidReasoningEffort("opencode/nemotron-3.5-super-vl-free", "minimal")).toBe(true);
+    expect(isValidReasoningEffort("opencode-go/gpt-5.6-luna", "max")).toBe(true);
+    expect(isValidReasoningEffort("opencode-go/hy4-preview", "none")).toBe(true);
+    expect(isValidReasoningEffort("opencode-go/glm-5.3", "high")).toBe(true);
+    expect(isValidReasoningEffort("opencode-go/glm-5.1", "high")).toBe(false);
     expect(isValidReasoningEffort("invalid", "high")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-sonnet-4-5", "")).toBe(false);
   });

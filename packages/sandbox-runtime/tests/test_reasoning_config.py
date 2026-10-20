@@ -38,3 +38,22 @@ async def test_manual_variants_available_when_switching_from_adaptive_model(reas
                 "max": {"thinking": {"type": "enabled", "budgetTokens": 31_999}},
             }
         }
+
+
+async def test_opencode_reasoning_variants_are_explicit(reasoning_config):
+    opencode = reasoning_config["provider"]["opencode"]["models"]
+    assert opencode["beam-free"]["variants"] == {
+        effort: {"reasoningEffort": effort} for effort in ("low", "medium", "high", "xhigh", "max")
+    }
+    assert opencode["glm-5.2"]["variants"] == {
+        "high": {"reasoningEffort": "high"},
+        "max": {"reasoningEffort": "max"},
+    }
+    assert "big-pickle" not in opencode
+
+    go = reasoning_config["provider"]["opencode-go"]["models"]
+    assert go["glm-5.3"]["variants"] == {
+        effort: {"reasoningEffort": effort} for effort in ("low", "high", "max")
+    }
+    assert go["gpt-5.6-luna"]["variants"]["none"] == {"reasoningEffort": "none"}
+    assert "glm-5.1" not in go

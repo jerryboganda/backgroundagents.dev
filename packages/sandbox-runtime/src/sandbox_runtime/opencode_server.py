@@ -29,6 +29,52 @@ _LOG_FORWARD_STREAM_LIMIT_BYTES = 1024 * 1024
 AGENT_TOOLS_GATED_ON_ENV = {"slack-notify.js": "AGENT_SLACK_NOTIFY_ENABLED"}
 AGENT_TOOLS_REQUIRING_REPOSITORY: set[str] = set()
 
+# OpenCode's own variant generation predates several Zen/Go models, so define
+# the reasoning variants explicitly. Keep in sync with
+# packages/shared/src/models.ts, which is the catalog the UI and admission use.
+_OPENCODE_REASONING_EFFORTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "opencode": {
+        "kimi-k3": ("max",),
+        "glm-5.2": ("high", "max"),
+        "beam-free": ("low", "medium", "high", "xhigh", "max"),
+        "glm-5.3-flash-free": ("low", "high", "max"),
+        "deepseek-v4.1-flash-free": ("low", "high", "max"),
+        "nemotron-3.5-super-vl-free": ("none", "minimal", "low", "medium", "high", "xhigh"),
+        "space-bunny-free": ("low", "medium", "high", "xhigh", "max"),
+        "minimax-m3.1-flash-free": ("low", "medium", "high", "xhigh", "max"),
+    },
+    "opencode-go": {
+        "grok-4.6": ("low", "medium", "high", "xhigh"),
+        "gpt-5.6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
+        "glm-5.3-flash": ("low", "high", "max"),
+        "glm-5.3": ("low", "high", "max"),
+        "glm-5.2": ("high", "max"),
+        "kimi-k3": ("max",),
+        "deepseek-v4.1-flash": ("low", "high", "max"),
+        "deepseek-v4-pro": ("high", "max"),
+        "deepseek-v4-flash": ("low", "high", "max"),
+        "deepseek-v4-flash-vision-exp": ("low", "high", "max"),
+        "muse-spark-1.3-contributor": ("minimal", "low", "medium", "high", "xhigh"),
+        "muse-spark-1.2-contributor": ("minimal", "low", "medium", "high", "xhigh"),
+        "qwen3.8-max": ("low", "medium", "xhigh"),
+        "qwen3.8-flash": ("low", "medium", "xhigh"),
+        "hy4-preview": ("none", "high"),
+        "hy3": ("none", "low", "high"),
+        "grok-4.7": ("low", "medium", "high", "xhigh"),
+        "beam-free": ("low", "medium", "high", "xhigh", "max"),
+        "space-bunny": ("low", "medium", "high", "xhigh", "max"),
+        "minimax-m3.1-flash-free": ("low", "medium", "high", "xhigh", "max"),
+        "step-5-preview": ("low", "medium", "high"),
+        "claude-haiku-5-5": ("low", "medium", "high", "xhigh", "max"),
+        "gemini-4-argon-contributor": ("low", "medium", "high"),
+    },
+}
+
+
+def _reasoning_variants(efforts: tuple[str, ...]) -> dict[str, dict[str, str]]:
+    """Build OpenCode variant bodies for an OpenAI-compatible provider."""
+    return {effort: {"reasoningEffort": effort} for effort in efforts}
+
 
 def resolve_opencode_global_config_dir() -> Path:
     """Resolve OpenCode's global config directory using its xdg-basedir rules."""
@@ -393,26 +439,34 @@ class OpenCodeServer:
         self.log.info("opencode.start")
 
         # Build OpenCode config from session settings
+        provider_config: dict[str, Any] = {
+            "anthropic": {
+                "models": {
+                    model: {
+                        "variants": {
+                            effort: {"thinking": {"type": "enabled", "budgetTokens": budget}}
+                            for effort, budget in (("high", 16_000), ("max", 31_999))
+                        }
+                    }
+                    for model in (
+                        "claude-haiku-4-5",
+                        "claude-sonnet-4-5",
+                        "claude-opus-4-5",
+                    )
+                }
+            }
+        }
+        for provider_id, models in _OPENCODE_REASONING_EFFORTS.items():
+            provider_config[provider_id] = {
+                "models": {
+                    model_id: {"variants": _reasoning_variants(efforts)}
+                    for model_id, efforts in models.items()
+                }
+            }
         opencode_config: dict[str, Any] = {
             "model": f"{self.provider}/{self.model}",
             "permission": {"*": {"*": "allow"}},
-            "provider": {
-                "anthropic": {
-                    "models": {
-                        model: {
-                            "variants": {
-                                effort: {"thinking": {"type": "enabled", "budgetTokens": budget}}
-                                for effort, budget in (("high", 16_000), ("max", 31_999))
-                            }
-                        }
-                        for model in (
-                            "claude-haiku-4-5",
-                            "claude-sonnet-4-5",
-                            "claude-opus-4-5",
-                        )
-                    }
-                }
-            },
+            "provider": provider_config,
         }
 
         memory_file = memory_path(resolve_opencode_global_config_dir())

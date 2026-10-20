@@ -15,7 +15,7 @@ import { z } from "zod";
 const validModelSchema = z.custom<ValidModel>(
   (value) => typeof value === "string" && isValidModel(value) && normalizeModelId(value) === value
 );
-const reasoningEffortSchema = z.enum(["none", "low", "medium", "high", "xhigh", "max"]);
+const reasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const modelSelectionSchema = z.object({
   model: validModelSchema,
   reasoningEffort: reasoningEffortSchema.optional(),

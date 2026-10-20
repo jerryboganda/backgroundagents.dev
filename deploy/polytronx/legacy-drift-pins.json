@@ -127,17 +127,17 @@
     {
       "path": "packages/docs/content/docs/models/choosing-a-model.mdx",
       "status": "M",
-      "sha": "51507dfb826fa5a00a7c091794dfd0f965c89e66"
+      "sha": "587b1bdd6798d06bd1ab6a0bdf40166889ff6e56"
     },
     {
       "path": "packages/shared/src/models.test.ts",
       "status": "M",
-      "sha": "12dc854b209aa716a975afcc3b0dc9e4fc3ea27f"
+      "sha": "84aa3450a2cf00ce7b3426600560140dc705c84c"
     },
     {
       "path": "packages/shared/src/models.ts",
       "status": "M",
-      "sha": "bc4ea8963f0674027f6baa2551e9fcff71d4da2f"
+      "sha": "ad4b938d8457a3323c8651ab87a8a9f33151ad26"
     },
     {
       "path": "packages/web/src/app/api/sessions/[id]/route.ts",
