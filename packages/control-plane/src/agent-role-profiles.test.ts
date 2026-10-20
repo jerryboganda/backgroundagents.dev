@@ -13,9 +13,7 @@ describe("operator-configured child agent roles", () => {
   it("leaves unlabelled child sessions unchanged, even when no policy exists", () => {
     const request = { harness: "claude" as const, model: "anthropic/claude-sonnet-4-6" };
     expect(resolveChildRoleProfile({}, request)).toEqual(request);
-    expect(resolveChildRoleProfile({ AGENT_ROLE_PROFILES: "{bad" }, request)).toEqual(
-      request
-    );
+    expect(resolveChildRoleProfile({ AGENT_ROLE_PROFILES: "{bad" }, request)).toEqual(request);
   });
 
   it("allows independently configured harnesses and models for five roles", () => {
@@ -27,9 +25,7 @@ describe("operator-configured child agent roles", () => {
     });
     expect(resolveChildRoleProfile(env, { role: "implementer" }).harness).toBe("claude");
     expect(resolveChildRoleProfile(env, { role: "reviewer" }).harness).toBe("codex");
-    expect(resolveChildRoleProfile(env, { role: "orchestrator" }).reasoningEffort).toBe(
-      "high"
-    );
+    expect(resolveChildRoleProfile(env, { role: "orchestrator" }).reasoningEffort).toBe("high");
     expect(resolveChildRoleProfile(env, { role: "ci", model: "openai/gpt-5.4" })).toEqual({
       harness: "opencode",
       model: "openai/gpt-5.4",
@@ -65,9 +61,7 @@ describe("operator-configured child agent roles", () => {
       { AGENT_ROLE_PROFILES: JSON.stringify({ administrator: { harness: "opencode" } }) },
       { AGENT_ROLE_PROFILES: "a".repeat(9000) },
     ]) {
-      expect(() => resolveChildRoleProfile(env, { role: "explorer" })).toThrow(
-        AgentRoleProfileError
-      );
+      expect(() => resolveChildRoleProfile(env, { role: "explorer" })).toThrow(AgentRoleProfileError);
     }
   });
 
