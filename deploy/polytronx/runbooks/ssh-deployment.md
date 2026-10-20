@@ -177,6 +177,11 @@ The workflows themselves are the least-privilege part: `permissions: contents: r
 `pull_request` or `push` trigger, and no third-party action. The key is written into the runner's
 temporary directory with mode 0600 and removed when the job ends.
 
+The branch is protected as well. A change reaches main through a pull request, the CI gate and the
+container smoke have to pass, and the conversation has to be resolved. The deployment runs from
+main, so the code it deploys is the code that passed those checks. The environment's approval is a
+separate act on top of that, and it is the one the owner gives.
+
 The runner reaches the hosts over the public internet. If the firewall admits only fixed addresses,
 use a self-hosted runner inside that network instead of weakening the SSH settings.
 
@@ -296,18 +301,37 @@ it starts, and watch the run.
 The workflow connects from the runner's address, over the public internet. The executor host on
 2026-10-20 answered a GitHub runner on port 22 with a timeout, while the dashboard host and the
 operator's own machine connected to the same host without trouble: the block was above the host, not
-on it, because the host's own firewall allows port 22 from anywhere and sshd was listening.
+on it, because the host's own firewall allows port 22 from anywhere and sshd was listening. A scan
+from a runner cannot complete either, for the same reason.
 
-Two ways to fix that, in the order to try them:
+The executor workflow therefore reaches its host through the dashboard host, which can reach it. The
+jump host holds a key of its own, in the executor environment, and the dashboard host's account
+accepts it for one thing only: forwarding to the executor's SSH port.
 
-1. Open the provider's firewall for the runner's addresses. The host's own firewall already allows
-   the port; nothing else on the host has to change.
-2. Run the executor workflow from a runner that can reach the host: a self-hosted runner on the
-   dashboard host, which already reaches the executor.
+    # On the dashboard host, in /home/deploy/.ssh/authorized_keys:
+    no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,permitopen="172.235.26.148:22",command="/bin/false" ssh-ed25519 <the jump host's public key>
 
-Until then, the executor deploys through the operator's path,
-`bash scripts/ship-executor.sh linode-executor`, which runs the same host script and the same checks
-as the workflow.
+The options say what the key may do: no terminal, no agent, no X11, no command, and one address and
+port it may forward to. The executor's own key never leaves the runner, and the dashboard host never
+sees it: the connection is forwarded, and the runner does the cryptography on both ends.
+
+The environment carries the jump host's settings:
+
+| Kind     | Name                        | Value                                        |
+| -------- | --------------------------- | -------------------------------------------- |
+| Secret   | `SSH_JUMP_PRIVATE_KEY`      | The whole contents of the jump host's key    |
+| Variable | `SSH_JUMP_HOST`             | The dashboard host's address                 |
+| Variable | `SSH_JUMP_USER`             | The account on the jump host                 |
+| Variable | `SSH_JUMP_PORT`             | The jump host's SSH port                     |
+| Variable | `SSH_JUMP_KNOWN_HOSTS`      | The jump host's verified known hosts records |
+| Variable | `SSH_JUMP_HOST_FINGERPRINT` | The jump host's key fingerprint              |
+
+The dashboard workflow names no jump host, and the setup action refuses a jump host that is only
+half given.
+
+Opening the provider's firewall for the runner's addresses would let the executor workflow connect
+directly and drop the jump host. Nothing else has to change on either host: the host's own firewall
+already allows the port.
 
 ## 8. Replacing the executor host
 
