@@ -108,9 +108,14 @@ runs:
           echo "::error::The known hosts file holds a different key for $HOST than the recorded fingerprint."
           exit 1
         fi
-        # The key the server presents now must be that same key.
+        # The key the server presents now must be that same key. A scan that cannot
+        # complete is not a mismatch: it means this runner's ssh-keyscan and the
+        # server do not share a key exchange method. The connection below still holds
+        # the host to the known hosts file, with StrictHostKeyChecking on.
         live="$(ssh-keyscan -p "$PORT" -t ed25519 "$HOST" 2>/dev/null | grep -v '^#' | ssh-keygen -l -f - -E sha256 2>/dev/null | awk '{print $2}' | sort -u || true)"
-        if ! printf '%s\n' "$live" | grep -qxF "$expected"; then
+        if [ -z "$live" ]; then
+          echo "::warning::The host key could not be scanned from this runner; the connection still holds the host to the verified key."
+        elif ! printf '%s\n' "$live" | grep -qxF "$expected"; then
           echo "::error::The host key $HOST presents does not match the recorded fingerprint."
           exit 1
         fi

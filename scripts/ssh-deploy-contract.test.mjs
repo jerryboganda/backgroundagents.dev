@@ -167,6 +167,10 @@ test("the SSH setup checks the host key against the fingerprint from the console
   assert.match(action, /grep -qxF "\$expected"/);
   // The fingerprint is required: the run stops when it is missing.
   assert.match(action, /fingerprint:\s*\n\s+description:[^\n]*\n\s+required: true/);
+  // A scan this runner cannot complete is a warning, not a mismatch: the connection
+  // holds the host to the verified key on its own.
+  assert.match(action, /::warning::The host key could not be scanned/);
+  assert.match(action, /::error::The host key \$HOST presents does not match/);
 });
 
 test("the SSH setup reads the key from the secret and never prints it", () => {
