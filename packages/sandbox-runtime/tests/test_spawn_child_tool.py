@@ -108,6 +108,18 @@ def test_omits_reasoning_effort_to_inherit_parent_setting(tmp_path: Path) -> Non
         "prompt": "Do the thing",
     }
 
+def test_serializes_operator_profile_role(tmp_path: Path) -> None:
+    result = _run_tool(
+        tmp_path,
+        {"title": "Review", "prompt": "Check security", "role": "reviewer"},
+    )
+    assert json.loads(result["request"]["options"]["body"]) == {
+        "title": "Review",
+        "prompt": "Check security",
+        "role": "reviewer",
+    }
+
+
 def test_serializes_explicit_child_harness(tmp_path: Path) -> None:
     result = _run_tool(
         tmp_path,
