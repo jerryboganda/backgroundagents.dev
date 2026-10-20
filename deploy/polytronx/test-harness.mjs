@@ -50,7 +50,10 @@ export function makeSandbox({ replace = {} } = {}) {
   const bin = `${root}/bin`;
   const deploy = `${root}/deploy`;
   mkdirSync(bin);
-  cpSync(DEPLOY_DIR, deploy, { recursive: true });
+  // The copy keeps the directory itself, so a step that reads deploy/polytronx/<file>
+  // finds it, the way it does in the repository.
+  mkdirSync(deploy, { recursive: true });
+  cpSync(DEPLOY_DIR, `${deploy}/polytronx`, { recursive: true });
   for (const name of [
     "docker",
     "curl",
@@ -61,15 +64,15 @@ export function makeSandbox({ replace = {} } = {}) {
     installStub(bin, name);
   }
   for (const [target, stub] of Object.entries(replace)) {
-    copyFileSync(`${STUBS}/${stub}`, `${deploy}/${target}`);
-    chmodSync(`${deploy}/${target}`, 0o755);
+    copyFileSync(`${STUBS}/${stub}`, `${deploy}/polytronx/${target}`);
+    chmodSync(`${deploy}/polytronx/${target}`, 0o755);
   }
   const log = `${root}/stub.log`;
   writeFileSync(log, "");
   const sandbox = {
     root,
     bin,
-    deploy,
+    deploy: `${deploy}/polytronx`,
     log,
     state: `${root}/state`,
     secrets: `${root}/secrets`,
