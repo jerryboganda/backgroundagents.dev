@@ -1,4 +1,5 @@
 import { HarnessAdmissionError, resolveChildHarnessSelection } from "../harness-admission";
+import { AgentRoleProfileError, resolveChildRoleProfile } from "../agent-role-profiles";
 import { ProviderAccountSelectionPolicyError } from "../model-provider-accounts/selection-policy";
 import { resolveSessionProviderAuth } from "../session/provider-account-resolution";
 import { checkHarnessCompatibility } from "@open-inspect/shared/harnesses";
@@ -225,17 +226,38 @@ export async function handleSpawnChild(
     });
     return error("Model preferences unavailable", 503);
   }
-  if (body.model !== undefined && !isValidModel(body.model)) {
-    return error(`Invalid model "${body.model}". Valid models: ${VALID_MODELS.join(", ")}`, 400);
+  let routedChild;
+  try {
+    routedChild = resolveChildRoleProfile(env, {
+      role: body.role,
+      harness: body.harness,
+      model: body.model,
+      reasoningEffort: body.reasoningEffort,
+    });
+  } catch (cause) {
+    if (cause instanceof AgentRoleProfileError) return error(cause.message, cause.status);
+    throw cause;
   }
-  const requestedModel = getValidModelOrDefault(body.model ?? spawnContext.model);
-  if (body.model !== undefined && !enabledModels.includes(requestedModel)) {
-    return error(`Model "${body.model}" is not enabled`, 400);
+  if (routedChild.model !== undefined && !isValidModel(routedChild.model)) {
+    return error(
+      `Invalid model "${routedChild.model}". Valid models: ${VALID_MODELS.join(", ")}`,
+      400
+    );
   }
-  const harness = body.harness ?? spawnContext.harness;
+  const requestedModel = getValidModelOrDefault(routedChild.model ?? spawnContext.model);
+  if (routedChild.model !== undefined && !enabledModels.includes(requestedModel)) {
+    return error(`Model "${routedChild.model}" is not enabled`, 400);
+  }
+  const harness = routedChild.harness ?? spawnContext.harness;
   let selection;
   try {
-    selection = await resolveChildHarnessSelection(ctx.db, env, spawnContext, body, enabledModels);
+    selection = await resolveChildHarnessSelection(
+      ctx.db,
+      env,
+      spawnContext,
+      routedChild,
+      enabledModels
+    );
   } catch (cause) {
     if (cause instanceof HarnessAdmissionError) return error(cause.message, cause.status);
     throw cause;
@@ -303,6 +325,7 @@ export async function handleSpawnChild(
     parent_id: parentId,
     child_id: childId,
     child_depth: childDepth,
+    role: body.role ?? null,
     harness,
     model,
   });
