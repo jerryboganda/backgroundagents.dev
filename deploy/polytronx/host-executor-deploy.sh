@@ -23,8 +23,23 @@
 # release file names the candidate release, but nothing that runs the executor changes.
 
 set -euo pipefail
-# shellcheck source=lib.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# The helpers live in the tree this script works on: the staged tree while it installs
+# that tree, and the installed tree afterwards. The copy of this script that sits in
+# /usr/local/sbin has no lib.sh beside it, so these three are defined here as well and
+# lib.sh replaces them once it is sourced.
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+info() {
+  printf 'INFO: %s\n' "$*"
+}
+
+warn() {
+  printf 'WARN: %s\n' "$*" >&2
+}
 
 STAGED=""
 ROOT="/opt/polytronx/executor"
@@ -56,6 +71,15 @@ STATE_DIR="$ROOT/state"
 RELEASE_FILE="$ROOT/executor-release.env"
 DEPLOY_DIR="$ROOT/deploy/polytronx"
 BUILD_DIR="$ROOT/build/vps-executor"
+
+# lib.sh carries the release helpers. It comes from the tree this script works on.
+if [ -n "$STAGED" ] && [ -f "$STAGED/deploy/polytronx/lib.sh" ]; then
+  # shellcheck source=lib.sh
+  source "$STAGED/deploy/polytronx/lib.sh"
+else
+  # shellcheck source=lib.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+fi
 
 # Installs the staged tree: the deployment scripts into the host's deploy directory and
 # the executor package into the image build directory. The previous scripts are kept

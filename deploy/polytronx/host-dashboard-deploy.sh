@@ -22,8 +22,23 @@
 # script prepares the tree, the images and the release file, and reports the result.
 
 set -euo pipefail
-# shellcheck source=lib.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# The helpers live in the tree this script works on: the staged tree while it installs
+# that tree, and the installed tree afterwards. The copy of this script that sits in
+# /usr/local/sbin has no lib.sh beside it, so these three are defined here as well and
+# lib.sh replaces them once it is sourced.
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+info() {
+  printf 'INFO: %s\n' "$*"
+}
+
+warn() {
+  printf 'WARN: %s\n' "$*" >&2
+}
 
 STAGED=""
 ROOT="/opt/polytronx/openinspect"
@@ -53,6 +68,16 @@ done
 STATE_DIR="$ROOT/state"
 RELEASE_FILE="$STATE_DIR/release.env"
 SRC="$ROOT/source"
+
+# lib.sh carries the release helpers: reading a release file and pulling the pinned
+# third-party images. It comes from the tree this script works on.
+if [ -n "$STAGED" ] && [ -f "$STAGED/deploy/polytronx/lib.sh" ]; then
+  # shellcheck source=lib.sh
+  source "$STAGED/deploy/polytronx/lib.sh"
+else
+  # shellcheck source=lib.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+fi
 
 # Installs the staged tree as the live source tree. The previous tree is kept under a
 # timestamped name, so a failed deployment can be inspected and deployed again.
