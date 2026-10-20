@@ -575,6 +575,25 @@ exit 0
     assert.deepEqual(refused(neighbours), neighbours);
   });
 
+  it("admits the paths the drift manifest pins, and refuses their neighbours", () => {
+    // The overlay already diverges on these paths. They are pinned by exact blob hash in
+    // deploy/polytronx/legacy-drift-pins.json, and the verifier holds them, so the
+    // allowlist step does not refuse them.
+    const pinned = [
+      ".github/workflows/ci.yml",
+      "packages/shared/src/models.ts",
+      "scripts/opencode-model-sync.mjs",
+    ];
+    assert.deepEqual(refused(pinned), []);
+    // A neighbour of a pinned path is still refused.
+    const neighbours = [
+      ".github/workflows/ci.yml.bak",
+      "packages/shared/src/models.ts.orig",
+      "scripts/opencode-model-sync.mjs.orig",
+    ];
+    assert.deepEqual(refused(neighbours), neighbours);
+  });
+
   it("refuses a nested .gitignore, and upstream or neighbouring paths", () => {
     assert.ok(
       allowed.startsWith("^("),
@@ -591,7 +610,6 @@ exit 0
         "packages/modal-infra/src/web_api.py.orig",
         "packages/modal-infra/tests/test_sandbox_capacity.py.bak",
         "packages/web/Dockerfile.bak",
-        ".github/workflows/ci.yml",
         "xdeploy/polytronx/backup.sh",
         "deploy/polytronx-backup/backup.sh",
       ]),
@@ -605,7 +623,6 @@ exit 0
         "packages/modal-infra/src/web_api.py.orig",
         "packages/modal-infra/tests/test_sandbox_capacity.py.bak",
         "packages/web/Dockerfile.bak",
-        ".github/workflows/ci.yml",
         "xdeploy/polytronx/backup.sh",
         "deploy/polytronx-backup/backup.sh",
       ]
