@@ -19,6 +19,12 @@ export default tool({
       .describe(
         "Choose the child agent harness independently of the parent. Omit to inherit the parent's harness. Codex requires a Modal sandbox."
       ),
+    role: z
+      .string()
+      .optional()
+      .describe(
+        "Optional operator-configured execution role: orchestrator, explorer, implementer, reviewer, or ci. When given, deployment policy chooses the harness and model; conflicting overrides fail."
+      ),
     title: z.string().describe("Short title describing the child session (shown in the UI)."),
     prompt: z
       .string()
