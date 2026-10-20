@@ -16,10 +16,7 @@ export class AgentRoleProfileError extends Error {
   readonly status = 409;
 }
 
-type RoleSelection = Pick<
-  SpawnChildSessionRequest,
-  "harness" | "model" | "reasoningEffort"
->;
+type RoleSelection = Pick<SpawnChildSessionRequest, "harness" | "model" | "reasoningEffort">;
 
 type RoleRequest = RoleSelection & { role?: AgentRole };
 
@@ -50,9 +47,7 @@ export function resolveChildRoleProfile(
 
   const profile = checked.data[requested.role];
   if (!profile) {
-    throw new AgentRoleProfileError(
-      `No agent profile configured for role "${requested.role}".`
-    );
+    throw new AgentRoleProfileError(`No agent profile configured for role "${requested.role}".`);
   }
 
   for (const key of ["harness", "model", "reasoningEffort"] as const) {
