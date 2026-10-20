@@ -208,6 +208,92 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     );
   });
 
+  it("routes the reviewer role to its independently configured harness and model", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env, childStub } = makeSuccessfulEnv(spawnContext);
+    const roleEnv = {
+      ...env,
+      AGENT_ROLE_PROFILES: JSON.stringify({
+        reviewer: { harness: "claude", model: "anthropic/claude-sonnet-4-6" },
+      }),
+    };
+    const response = await makeRequest(roleEnv, {
+      title: "Check the implementation",
+      prompt: "Review the code",
+      role: "reviewer",
+    });
+
+    expect(response.status).toBe(201);
+    expect(store.getCompleteProviderAuth).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).toHaveBeenCalledWith(expect.anything(), {
+      harness: "claude",
+      unattended: true,
+    });
+    expect(store.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "[reviewer] Check the implementation",
+        harness: "claude",
+        model: "anthropic/claude-sonnet-4-6",
+      })
+    );
+    await expect(getInitBody(childStub)).resolves.toMatchObject({
+      title: "[reviewer] Check the implementation",
+      harness: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+    });
+  });
+
+  it("rejects an agent role override conflicting with the operator policy", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(
+      {
+        ...env,
+        AGENT_ROLE_PROFILES: JSON.stringify({
+          reviewer: { harness: "claude", model: "anthropic/claude-sonnet-4-6" },
+        }),
+      },
+      {
+        title: "Unsafe override",
+        prompt: "Review the code",
+        role: "reviewer",
+        harness: "codex",
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("conflicting overrides"),
+    });
+    expect(store.create).not.toHaveBeenCalled();
+    expect(resolveSessionProviderAuth).not.toHaveBeenCalled();
+  });
+
+  it("rejects unconfigured agent roles instead of silently using the parent", async () => {
+    const store = makeStore();
+    vi.mocked(SessionIndexStore).mockImplementation(function () {
+      return store as never;
+    });
+    const { env } = makeSuccessfulEnv(spawnContext);
+    const response = await makeRequest(env, {
+      title: "Check the implementation",
+      prompt: "Review the code",
+      role: "reviewer",
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Configure AGENT_ROLE_PROFILES"),
+    });
+    expect(store.create).not.toHaveBeenCalled();
+  });
+
   it("spawns a child on Claude Agent with its own provider account", async () => {
     const store = makeStore();
     vi.mocked(SessionIndexStore).mockImplementation(function () {
