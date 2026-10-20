@@ -251,6 +251,8 @@ class OpenInspectTools:
 
     async def spawn_child(self, args: Mapping[str, Any]) -> ToolResult:
         body: dict[str, Any] = {"title": args.get("title"), "prompt": args.get("prompt")}
+        if args.get("role") is not None:
+            body["role"] = args["role"]
         if args.get("harness") is not None:
             body["harness"] = args["harness"]
         if args.get("model"):
