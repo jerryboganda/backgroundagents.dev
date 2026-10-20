@@ -49,48 +49,6 @@ jobs:
           # The root .env.example task template and the root .gitattributes are admitted by exact name only. The root package.json and the root AGENTS.md are admitted by exact name too: the overlay adds its own scripts and documents them there.
           # The sandbox image and runtime files are listed by exact path, as is the sandbox-images workflow. The 0090 migration, the web secrets editor files, and the secrets-validation and sandbox-env files are listed by exact path too. The control-plane secrets routes and their tests (team, environment and global) are listed by exact path as well, and so are the environment secrets store and its test. The modal launch and recovery files, the docker launch test, and the team secrets store test are listed by exact path too.
           # The SSH deployment workflows, the SSH setup action they share, and the scripts that verify and ship over SSH are listed by exact path too.
-          # Credential paths are refused before the broad prefixes above can admit them: nested
-          # .env and .env.* files, every other *.env file (the exact deploy/polytronx/pins.env and the
-          # root .env.example are the exceptions), private keys, auth stores, token files, Terraform
-          # state and variables, and secrets or credential directories. Matching ignores case.
-        # The workspace typecheck does not reach scripts/, so the bootstrap is checked on its own.
-        # Operational failure paths, restore refusals, the provider cap gate, and the
-        # rendered-config rules. Stubbed docker, curl and df; nothing reaches a host or a provider.
-        # The SSH deployment workflows and the shared SSH setup action: manual runs only,
-        # the environment that holds the key, the least token permissions, a verified host
-        # key, and a key that is never printed. No host and no network.
-    # Linux is the reference platform. Baseline differences seen on Windows are reported separately.
-        # --locked fails when pyproject.toml and uv.lock disagree, instead of rewriting the lock.
-        # The control-plane admission and provider tests import the shared package.
-        # Every docker call is a fake here. Nothing starts a container.
-        # The control plane grants the lease the executor checks and holds the sandbox reservations.
-        # Unit tests with fakes only. The Modal capacity tests run in modal-linux.
-          # Empty secret files: compose reads their names, never their values.
-          # A public test certificate, copied so the mount has a file. It is never a key.
-        # Ports, networks and aliases as compose resolved them: the production loopback
-        # bindings and edge aliases, and a rehearsal with no published port and no network
-        # that leaves the host. The rules are in deploy/polytronx/rendered-config.mjs.
-          # The control plane mounts the executor CA once, read-only, from the public certificate.
-        # Placeholders only: nothing here starts a container or reads a secret value. The checks
-        # read back what compose.executor.yml sets: one published port on loopback, sixteen slots, the
-        # state file, the control-plane URL, a non-root user, a read-only root filesystem, dropped
-        # capabilities and limits. The control-plane URL is a fixture on the reserved .invalid TLD.
-        # Builds open-inspect-control-plane:local from the unmodified upstream
-        # Dockerfile, boots it with a fake Modal, round-trips a session, and
-        # checks the drain on SIGTERM.
-          # Explicit: the Dockerfile defaults NEXT_PUBLIC_SANDBOX_PROVIDER to modal.
-          # The secret is generated for this run only and is never printed.
-        # Built from its own directory, so the context is the package alone. The vps-executor job
-        # checks the Dockerfile's base image against NODE_IMAGE.
-        # The image runs as node and carries the docker CLI. Started with no docker socket, it must
-        # answer 503 on its health route, which shows it fails closed when gVisor is absent. The
-        # token and admission secret are generated for this run only and are never printed. No
-        # sandbox is created.
-          # Each archive must carry the image ID it is recorded with. The listing
-          # goes to a file so grep -q cannot close a pipe early under pipefail.
-          # Image and revision values. The CONTROL_PLANE and WEB lines go to state/release.env on
-          # the dashboard host; the EXECUTOR lines go to executor-release.env on the executor host.
-          # Site values (paths, ports, buckets, addresses) stay with the operator. Nothing here is a secret.
           # The root .env.example task template and the root .gitattributes are admitted by exact name only.
           allowed='^(deploy/polytronx/|\.github/workflows/polytronx-openinspect\.yml$|packages/web/Dockerfile(\.dockerignore)?$|packages/web/src/components/secrets-editor\.tsx$|packages/web/src/components/secrets-editor\.test\.ts$|packages/vps-executor/|scripts/bootstrap-node-owner(\.test)?\.ts$|scripts/tsconfig\.bootstrap\.json$|packages/modal-infra/src/sandbox/(build_session|capacity|launch|launch_policy|vm_recovery)\.py$|packages/modal-infra/src/web_api\.py$|packages/modal-infra/tests/test_sandbox_capacity\.py$|packages/modal-infra/tests/test_docker_launch\.py$|packages/control-plane/src/(node/config|types)\.ts$|packages/control-plane/src/sandbox/(provider|provider-factory|provider-factory\.test)\.ts$|packages/control-plane/src/sandbox/lifecycle/(manager|vm-startup-reconciliation|sandbox-id\.test)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations|manager-admission)\.test\.ts$|packages/control-plane/src/sandbox/providers/vps-provider(\.test)?\.ts$|packages/control-plane/src/sandbox/providers/pending-vm-reference\.ts$|packages/control-plane/src/sandbox/admission/vps-reconcile(\.test)?\.ts$|packages/control-plane/src/db/secrets-validation(\.test)?\.ts$|packages/control-plane/src/sandbox/sandbox-env\.ts$|packages/control-plane/src/scheduled-jobs(\.test)?\.ts$|packages/control-plane/src/session/components(-admission\.test)?\.ts$|packages/control-plane/src/session/sandbox-shutdown(\.test)?\.ts$|packages/control-plane/test/integration/cleanup\.ts$|packages/control-plane/src/db/environment-secrets(\.test)?\.ts$|packages/control-plane/src/db/team-secrets\.ts$|packages/control-plane/src/routes/environment-secrets\.ts$|packages/control-plane/src/routes/secrets\.ts$|packages/control-plane/src/routes/secrets\.repository-grants\.test\.ts$|packages/control-plane/test/integration/environments-routes\.test\.ts$|packages/control-plane/test/integration/global-secrets\.test\.ts$|packages/control-plane/test/integration/team-secrets-routes\.test\.ts$|packages/control-plane/test/integration/team-secrets-store\.test\.ts$|packages/shared/src/types/integrations\.ts$|terraform/d1/migrations/0089_sandbox_admission_reservations\.sql$|terraform/d1/migrations/0090_sandbox_admission_relinquished\.sql$|package-lock\.json$|package\.json$|AGENTS\.md$|\.gitignore$|\.env\.example$|\.gitattributes$|\.github/workflows/sandbox-images\.yml$|\.github/workflows/ssh-deploy-(dashboard|executor)\.yml$|\.github/actions/ssh-setup/action\.yml$|scripts/ship-(dashboard|executor)\.sh$|scripts/ssh-verify(\.test)?\.mjs$|scripts/ssh-deploy-contract\.test\.mjs$|packages/sandbox-images/(Dockerfile\.vps|README\.md|targets\.json|install/filesystem\.sh|vps/entrypoint\.sh|src/sandbox_images/(bundle|native)\.py|tests/(test_bundle|test_verification|test_vps_seed)\.py|verify/smoke_test\.py)$|packages/sandbox-runtime/(src/sandbox_runtime/(entrypoint|session_context_start)\.py|tests/test_session_context_start\.py)$|\.github/workflows/polytronx-release-integration\.yml$|\.github/workflows/cross-harness-child-ci\.yml$|\.github/workflows/vps-workspace-contract\.yml$|\.github/workflows/vps-edge-contract\.yml$|\.github/workflows/polytronx-overlay-contract\.yml$|scripts/ship-executor\.sh$|docs/AGENT_ROLES\.md$|docs/HOW_IT_WORKS\.md$|packages/control-plane/src/agent-role-profiles\.test\.ts$|packages/control-plane/src/agent-role-profiles\.ts$|packages/control-plane/src/harness-admission\.test\.ts$|packages/control-plane/src/harness-admission\.ts$|packages/control-plane/src/router\.spawn-child\.test\.ts$|packages/control-plane/src/routes/session-child-spawn\.ts$|packages/docs/content/docs/models/agent-harnesses\.mdx$|packages/docs/content/docs/sessions/child-sessions\.mdx$|packages/sandbox-runtime/src/sandbox_runtime/harness/tools\.py$|packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child\.js$|packages/sandbox-runtime/tests/test_spawn_child_tool\.py$|packages/sandbox-runtime/tests/test_tools\.py$|packages/shared/src/types/boundary-schemas\.test\.ts$|packages/shared/src/types/session-api\.ts$|\.github/workflows/(polytronx-openinspect|dashboard-ssh-readiness|executor-ssh-readiness|dual-vps-ssh-contracts)\.yml$)'
           changed="$(git diff --name-only --no-renames "$pin" HEAD)"
