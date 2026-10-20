@@ -65,6 +65,20 @@ async def test_spawn_child_posts_to_children_with_the_sandbox_token(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_spawn_child_forwards_explicit_harness(tmp_path: Path) -> None:
+    tools, seen = _tools(tmp_path, lambda _r: httpx.Response(201, json={"sessionId": "child-2"}))
+    result = await tools.spawn_child(
+        {"title": "Reviewer", "prompt": "Review the code", "harness": "claude"}
+    )
+    assert json.loads(seen[0].content) == {
+        "title": "Reviewer",
+        "prompt": "Review the code",
+        "harness": "claude",
+    }
+    assert "child-2" in _text(result)
+
+
+@pytest.mark.asyncio
 async def test_spawn_child_explains_a_depth_limit(tmp_path: Path) -> None:
     tools, _ = _tools(tmp_path, lambda _r: httpx.Response(403, json={"error": "depth exceeded"}))
     assert "depth exceeded" in _text(await tools.spawn_child({"title": "t", "prompt": "p"}))

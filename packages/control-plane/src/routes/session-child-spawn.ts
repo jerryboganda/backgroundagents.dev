@@ -1,4 +1,6 @@
 import { HarnessAdmissionError, resolveChildHarnessSelection } from "../harness-admission";
+import { ProviderAccountSelectionPolicyError } from "../model-provider-accounts/selection-policy";
+import { resolveSessionProviderAuth } from "../session/provider-account-resolution";
 import { checkHarnessCompatibility } from "@open-inspect/shared/harnesses";
 import { parseBody } from "./body";
 import { Hono } from "hono";
@@ -230,7 +232,7 @@ export async function handleSpawnChild(
   if (body.model !== undefined && !enabledModels.includes(requestedModel)) {
     return error(`Model "${body.model}" is not enabled`, 400);
   }
-  const harness = spawnContext.harness;
+  const harness = body.harness ?? spawnContext.harness;
   let selection;
   try {
     selection = await resolveChildHarnessSelection(ctx.db, env, spawnContext, body, enabledModels);
@@ -242,19 +244,48 @@ export async function handleSpawnChild(
 
   let providerAuth;
   try {
-    providerAuth = await sessionStore.getCompleteProviderAuth(parentId);
+    if (harness === spawnContext.harness) {
+      // Existing children keep their parent's exact pinned provider accounts.
+      providerAuth = (await sessionStore.getCompleteProviderAuth(parentId)).map((auth) => ({
+        ...auth,
+        inheritedFromSessionId: parentId,
+      }));
+    } else {
+      // A different harness has its own credential policy. Resolve active
+      // installation defaults for unattended delegation, not the parent's
+      // potentially incompatible pinned authentication.
+      providerAuth = (await resolveSessionProviderAuth(ctx.db, {
+        harness,
+        unattended: true,
+      })).map((auth) =>
+        auth.authMode === "legacy_scoped_oauth"
+          ? {
+              provider: auth.provider,
+              authMode: "api_key" as const,
+              selectionSource: "cross_harness_api_key_fallback",
+            }
+          : auth
+      );
+    }
   } catch (cause) {
-    logger.error("Failed to load parent provider auth", {
+    if (cause instanceof ProviderAccountSelectionPolicyError) {
+      return error(cause.message, cause.status);
+    }
+    logger.error("Failed to resolve child provider auth", {
       event: "session.spawn_child_provider_auth_failed",
       parent_id: parentId,
+      harness,
       error: cause instanceof Error ? cause.message : String(cause),
       trace_id: ctx.trace_id,
       request_id: ctx.request_id,
     });
-    return error("Parent provider auth unavailable", 503);
+    return error(
+      harness === spawnContext.harness
+        ? "Parent provider auth unavailable"
+        : "Child provider auth unavailable",
+      503
+    );
   }
-  // The child inherits the parent's auth modes but may run a different model,
-  // so the auth half of the harness rule is checked against the child's model.
   const harnessAuthIncompatibility = checkHarnessCompatibility(
     harness,
     model,
@@ -270,6 +301,7 @@ export async function handleSpawnChild(
     parent_id: parentId,
     child_id: childId,
     child_depth: childDepth,
+    harness,
     model,
   });
 
@@ -320,10 +352,7 @@ export async function handleSpawnChild(
     automationRunId: parentSession?.automationRunId ?? null,
     managedSkills: inheritedPin(parentId),
     memory: inheritedPin(parentId),
-    providerAuth: providerAuth.map((auth) => ({
-      ...auth,
-      inheritedFromSessionId: parentId,
-    })),
+    providerAuth,
   };
 
   const admissionLease = await sessionStore.acquireChildAdmissionLease(

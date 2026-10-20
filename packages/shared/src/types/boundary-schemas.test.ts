@@ -172,6 +172,22 @@ describe("boundary schemas", () => {
     });
   });
 
+  describe("spawnChildSessionRequestSchema", () => {
+    it("accepts a child harness override and preserves omission", () => {
+      const input = { title: "Review", prompt: "Review the PR", harness: "claude" };
+      expect(spawnChildSessionRequestSchema.parse(input)).toEqual(input);
+      expect(spawnChildSessionRequestSchema.parse({
+        title: "Review",
+        prompt: "Review the PR",
+      })).not.toHaveProperty("harness");
+    });
+
+    it("rejects unknown child harness identifiers", () => {
+      const input = { title: "Review", prompt: "Review the PR", harness: "unavailable" };
+      expect(spawnChildSessionRequestSchema.safeParse(input).success).toBe(false);
+    });
+  });
+
   describe("createSessionRequestSchema", () => {
     it("parses a valid session creation request", () => {
       const result = createSessionRequestSchema.safeParse({

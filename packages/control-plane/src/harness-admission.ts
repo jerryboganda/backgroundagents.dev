@@ -175,24 +175,38 @@ export async function resolveChildHarnessSelection(
   db: SqlDatabase,
   env: HarnessAdmissionConfig,
   parent: { harness: HarnessId; model: string; reasoningEffort: string | null },
-  requested: { model?: string; reasoningEffort?: string },
+  requested: { harness?: HarnessId; model?: string; reasoningEffort?: string },
   enabledModels: ValidModel[]
 ): Promise<{ model: ValidModel; reasoningEffort: ReasoningEffort | null }> {
-  const strict = getHarnessCapabilities(parent.harness).selectionPolicy === "strict";
+  const harness = requested.harness ?? parent.harness;
+  const switchingHarness = harness !== parent.harness;
+  const strict = getHarnessCapabilities(harness).selectionPolicy === "strict";
+  const compatible = filterModelsForHarness(harness, enabledModels);
   const inheritedModel = getValidModelOrDefault(requested.model ?? parent.model);
-  const compatible = strict ? filterModelsForHarness(parent.harness, enabledModels) : enabledModels;
   const model = strict
-    ? (requested.model ?? compatible.find((model) => model === inheritedModel) ?? compatible[0])
-    : resolveEnabledModel({ model: inheritedModel, enabledModels });
-  const inheritedEffort = model
-    ? inheritReasoningEffort(parent.harness, model, parent.reasoningEffort)
-    : undefined;
+    ? (requested.model ??
+      (switchingHarness
+        ? compatible[0]
+        : (compatible.find((candidate) => candidate === inheritedModel) ?? compatible[0])))
+    : switchingHarness
+      ? (requested.model ?? compatible[0])
+      : resolveEnabledModel({ model: inheritedModel, enabledModels });
+  if (switchingHarness && model === undefined) {
+    throw new HarnessAdmissionError(
+      `No qualified ${getHarnessLabel(harness)} model is enabled. Enable a compatible model in Settings.`,
+      409
+    );
+  }
+  // A different harness may have incompatible reasoning defaults. Inherit only
+  // within the parent's harness, or use the explicitly requested child effort.
+  const inheritedEffort =
+    model && !switchingHarness ? inheritReasoningEffort(harness, model, parent.reasoningEffort) : undefined;
   if (
     requested.reasoningEffort !== undefined &&
     model &&
-    !isValidHarnessReasoningEffort(parent.harness, model, requested.reasoningEffort)
+    !isValidHarnessReasoningEffort(harness, model, requested.reasoningEffort)
   ) {
-    const validEfforts = getHarnessReasoningConfig(parent.harness, model)?.efforts;
+    const validEfforts = getHarnessReasoningConfig(harness, model)?.efforts;
     const suffix = validEfforts?.length
       ? ` Valid efforts: ${validEfforts.join(", ")}`
       : " This model does not support reasoning effort overrides.";
@@ -204,7 +218,7 @@ export async function resolveChildHarnessSelection(
     db,
     env,
     {
-      harness: parent.harness,
+      harness,
       model,
       reasoningEffort: requested.reasoningEffort ?? inheritedEffort,
     },

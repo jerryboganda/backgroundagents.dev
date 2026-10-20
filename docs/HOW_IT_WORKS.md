@@ -508,6 +508,8 @@ You can also stop the current execution if the agent is going down the wrong pat
 
 ### Parent-to-Child Follow-Ups
 
+A child inherits the parent's agent harness by default. An explicit `harness` in `spawn-child` can select OpenCode, Claude Agent, or Codex for that child. A cross-harness child uses a compatible enabled model and resolves its own authentication under the installation's unattended account policy instead of copying the parent's provider account bindings. Codex is restricted to qualified Modal sandbox backends.
+
 An agent that created a child with `spawn-child` can continue that same child session with
 `send-child-prompt`. The follow-up enters the child's normal durable queue:
 

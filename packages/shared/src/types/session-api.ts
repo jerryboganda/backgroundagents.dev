@@ -342,6 +342,8 @@ export type ListSessionsResponse = SessionListResponse;
 export const spawnChildSessionRequestSchema = z.object({
   title: z.string(),
   prompt: z.string(),
+  /** Omission inherits the parent's harness; an override is fixed for the new child. */
+  harness: harnessIdSchema.optional(),
   repoOwner: z.string().optional(),
   repoName: z.string().optional(),
   model: z.string().optional(),
