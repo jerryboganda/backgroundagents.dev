@@ -1,0 +1,135 @@
+# Deploys the committed executor tree to the executor host over SSH.
+#
+# Manual only. The job runs in the executor-production environment, so it needs that
+# environment's secret (the deployment key) and its variables (the host, the port, the
+# user, the verified known hosts records and the host key fingerprint). The environment's
+# protection rules decide who may start the run and which branches may use it.
+#
+# The executor host is replaced every one or two months, so this environment's secret
+# and variables are replaced with it. The dashboard-production environment is not
+# affected: its key never reaches this host.
+#
+# The run refuses a ref that is not main, checks the host key against the fingerprint
+# that was read from the server console, and never prints the key. The deployment itself
+# is the repository's own executor deployment, run on the host by the host's root entry
+# point (runbooks/ssh-deployment.md).
+#
+# Without the deploy input the run stops after the read-only preflight: the tree is
+# staged and checked, and nothing that runs the executor changes.
+
+name: Deploy the executor over SSH
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy the tree. The default runs the preflight and stops."
+        type: boolean
+        default: false
+      rollback_on_failure:
+        description: "Roll back to the last release that came up healthy when the deployment fails."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A second request waits for the first one instead of cancelling it.
+concurrency:
+  group: ssh-deploy-executor
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy the executor to the executor host
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: executor-production
+    env:
+      SSH_HOST: ${{ vars.SSH_HOST }}
+      SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+      SSH_USER: ${{ vars.SSH_USER }}
+      SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
+      SSH_HOST_FINGERPRINT: ${{ vars.SSH_HOST_FINGERPRINT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse a ref that is not main
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::This workflow deploys main only; this run targets $GITHUB_REF."
+            exit 1
+          fi
+
+      - name: Require the environment configuration
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          if [ -z "$SSH_PRIVATE_KEY" ]; then missing="$missing secret:SSH_PRIVATE_KEY"; fi
+          if [ -z "$SSH_HOST" ]; then missing="$missing variable:SSH_HOST"; fi
+          if [ -z "$SSH_USER" ]; then missing="$missing variable:SSH_USER"; fi
+          if [ -z "$SSH_PORT" ]; then missing="$missing variable:SSH_PORT"; fi
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then missing="$missing variable:SSH_KNOWN_HOSTS"; fi
+          if [ -z "$SSH_HOST_FINGERPRINT" ]; then missing="$missing variable:SSH_HOST_FINGERPRINT"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::The executor-production environment is missing:$missing"
+            exit 1
+          fi
+
+      - name: Set up the pinned SSH connection
+        uses: ./.github/actions/ssh-setup
+        with:
+          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known-hosts: ${{ vars.SSH_KNOWN_HOSTS }}
+          host: ${{ vars.SSH_HOST }}
+          port: ${{ vars.SSH_PORT || '22' }}
+          fingerprint: ${{ vars.SSH_HOST_FINGERPRINT }}
+
+      - name: Check the connection
+        run: |
+          set -euo pipefail
+          ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            'printf "connected to the executor host as %s\n" "$(id -un)"'
+
+      - name: Stage the executor tree on the host
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "Deploying revision $sha"
+          echo "revision: $sha" >>"$GITHUB_STEP_SUMMARY"
+          # The executor host needs the executor package and the deployment scripts.
+          # Nothing else of the repository goes to this host.
+          remote_home="$(ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" 'printf %s "$HOME"')"
+          staged="$remote_home/.polytronx/staging/$sha"
+          ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; rm -rf '$staged'; mkdir -p '$staged'; chmod 700 '$staged'"
+          git -c core.autocrlf=false -c core.eol=lf archive --format=tar HEAD \
+            packages/vps-executor deploy/polytronx |
+            ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "tar -xf - -C '$staged'"
+          echo "staged=$staged" >>"$GITHUB_ENV"
+
+      - name: Deploy on the host
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          flags=""
+          if [ "${{ inputs.deploy }}" = "true" ]; then flags="$flags --deploy"; fi
+          if [ "${{ inputs.rollback_on_failure }}" = "true" ]; then flags="$flags --rollback-on-failure"; fi
+          # sudo -n never prompts: the host's sudoers rule allows this one command.
+          ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "sudo -n /usr/local/sbin/polytronx-executor-deploy --staged '$STAGED' --root /opt/polytronx/executor --revision '$sha'$flags"
+
+      - name: Remove the staged tree
+        if: always()
+        run: |
+          if [ -n "${STAGED:-}" ] && [ -f "${SSH_CONFIG:-}" ]; then
+            ssh -F "$SSH_CONFIG" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+              "rm -rf '$STAGED'" || true
+          fi

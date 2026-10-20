@@ -2,6 +2,11 @@
 # to LF in every checkout, so core.autocrlf=true on Windows cannot turn them into CRLF.
 deploy/polytronx/** text eol=lf
 .github/workflows/polytronx-openinspect.yml text eol=lf
+.github/workflows/ssh-deploy-*.yml text eol=lf
+.github/actions/ssh-setup/action.yml text eol=lf
+# The ship scripts are read by bash on the operator's machine, so they are LF there too.
+scripts/ship-dashboard.sh text eol=lf
+scripts/ship-executor.sh text eol=lf
 # The image shell scripts and the extensionless runtime oi-git-sign, by exact path. These rules
 # apply at checkout; they do not rewrite bytes already in the index or in a working tree.
 packages/sandbox-images/install/common.sh text eol=lf

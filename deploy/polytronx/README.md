@@ -9,7 +9,9 @@ This directory, the web image, the owner bootstrap and the CI workflow are the a
 1. `runbooks/unsupported-and-gaps.md`: what does not work on this container, and why it is not
    claimed.
 2. `runbooks/deploy-and-rollback.md`: build, transfer, deploy, rollback.
-3. `runbooks/evidence-register.md`: what has been run, with results, and what has not.
+3. `runbooks/ssh-deployment.md`: the SSH deployment: keys, host key verification, the GitHub
+   environments, and the executor rotation.
+4. `runbooks/evidence-register.md`: what has been run, with results, and what has not.
 
 Also: `runbooks/accounts-and-admission.md` (GitHub App, OAuth, Modal, provider accounts, DNS, proxy,
 secrets), `runbooks/owner-bootstrap.md`, `runbooks/backup-and-restore.md`,
@@ -25,6 +27,7 @@ secrets), `runbooks/owner-bootstrap.md`, `runbooks/backup-and-restore.md`,
 | `templates/*.env.template`                    | Non-secret release values and empty secret files. Placeholders fail preflight.                                |
 | `preflight.sh`                                | Read-only checks. Any FAIL stops the deploy.                                                                  |
 | `deploy.sh`, `smoke.sh`, `rollback.sh`        | Ordered deploy, post-deploy smoke, return to the last good release.                                           |
+| `host-dashboard-deploy.sh`, `host-executor-deploy.sh` | The deployments, run on the host by the CI workflows or by the operator's ship scripts.             |
 | `backup.sh`, `restore-rehearsal.sh`           | Encrypted whole-state backup. Restore only into the rehearsal project.                                        |
 | `owner-bootstrap.sh`                          | Runs `scripts/bootstrap-node-owner.ts` inside the live control-plane image. Dry run by default.               |
 | `monitor.sh`, `templates/polytronx-monitor.*` | Health monitor and its systemd units.                                                                         |
@@ -36,14 +39,25 @@ secrets), `runbooks/owner-bootstrap.md`, `runbooks/backup-and-restore.md`,
 CI: `.github/workflows/polytronx-openinspect.yml`, run by hand. It builds and smokes both images,
 renders both Compose files, and uploads `polytronx-release`.
 
+The SSH deployment is separate: `.github/workflows/ssh-deploy-dashboard.yml` and
+`.github/workflows/ssh-deploy-executor.yml` run by hand, each in its own GitHub environment, and
+they run `host-dashboard-deploy.sh` and `host-executor-deploy.sh` on the host. The setup is in
+`runbooks/ssh-deployment.md`.
+
 ## Status
 
 - **Verified locally:** the guard tests (`node --test deploy/polytronx/*.test.mjs`), owner-bootstrap
   unit tests and shell syntax. CI-only checks (standalone bootstrap typecheck, rendered
   configuration, Linux Modal checks) are listed as NOT RUN in the evidence register.
+- **Verified locally:** the SSH deployment contract tests
+  (`npm run test:ssh-deploy-contract`): the two workflows and the shared SSH setup action keep
+  their manual trigger, their separate environments, the least token permissions, the verified host
+  key and the key out of the logs.
 - **Not run anywhere yet:** image builds, Compose smoke, deploy, backup, restore, owner bootstrap
   against a live store, sign-in, Modal, provider accounts, DNS, proxy routes. The workflow has never
   been dispatched. Dispatch needs the commit pushed, which needs owner authorization.
+- **Not run anywhere yet:** the SSH deployment. No environment exists, no key is installed on either
+  host, and neither workflow has been dispatched.
 - **Not in this package:** registry publication, a setup wizard, and the cross-harness controller.
   Secrets are created by the owner using `runbooks/accounts-and-admission.md`, not by a script.
 

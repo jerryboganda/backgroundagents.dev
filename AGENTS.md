@@ -70,6 +70,10 @@ npm test -w @open-inspect/github-bot
 npm test -w @open-inspect/slack-bot
 npm test -w @open-inspect/linear-bot
 
+# Tests — deployment (Node)
+npm run test:ssh-deploy-contract                   # SSH deployment workflows, action and verifier
+node --test deploy/polytronx/*.test.mjs            # deployment guard tests (bash stubs, Linux)
+
 # Tests — Python (pytest)
 cd packages/modal-infra && pytest tests/ -v
 
@@ -89,6 +93,8 @@ All TypeScript packages use **Vitest**; Python uses **pytest** + pytest-asyncio.
 - **web, slack-bot, linear-bot**: co-located `src/**/*.test.ts`
 - **github-bot**: separate `test/*.test.ts`
 - **modal-infra**: `tests/test_*.py`
+- **deployment**: `deploy/polytronx/*.test.mjs` (bash stubs, Linux only) and
+  `scripts/ssh-deploy-contract.test.mjs` (workflow and action rules, runs anywhere)
 
 ### Control-plane integration tests
 

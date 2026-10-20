@@ -1,0 +1,150 @@
+# Sets up the SSH connection a deployment workflow uses.
+#
+# The private key comes from an environment secret and the known hosts records from an
+# environment variable. Nothing here prints the key, and the key file stays in the
+# runner's temporary directory, which the runner discards with the job.
+#
+# The host key is checked twice before anything connects. The known hosts file must hold
+# the key that was read from the server console, and the key the server presents now
+# must be that same key. A mismatch stops the run.
+#
+# The client configuration is written with -F, so the system-wide ssh_config is ignored:
+# the options below are the only ones that apply to the deployment connection.
+name: Set up the deployment SSH connection
+description: Writes the deployment key and the verified known hosts file, and refuses a host key that does not match the recorded fingerprint.
+
+inputs:
+  private-key:
+    description: The deployment private key, from the environment secret SSH_PRIVATE_KEY.
+    required: true
+  known-hosts:
+    description: The verified known hosts records, from the environment variable SSH_KNOWN_HOSTS.
+    required: true
+  host:
+    description: The host to connect to, from the environment variable SSH_HOST.
+    required: true
+  port:
+    description: The SSH port, from the environment variable SSH_PORT.
+    required: false
+    default: "22"
+  fingerprint:
+    description: The SHA256 fingerprint of the host key, read from the server console.
+    required: true
+
+outputs:
+  config:
+    description: The path of the SSH client configuration the action wrote.
+    value: ${{ steps.client-config.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Refuse an incomplete configuration
+      shell: bash
+      env:
+        PRIVATE_KEY: ${{ inputs.private-key }}
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        HOST: ${{ inputs.host }}
+        PORT: ${{ inputs.port }}
+        FINGERPRINT: ${{ inputs.fingerprint }}
+      run: |
+        set -euo pipefail
+        missing=""
+        if [ -z "$PRIVATE_KEY" ]; then missing="$missing private-key"; fi
+        if [ -z "$KNOWN_HOSTS" ]; then missing="$missing known-hosts"; fi
+        if [ -z "$HOST" ]; then missing="$missing host"; fi
+        if [ -z "$PORT" ]; then missing="$missing port"; fi
+        if [ -z "$FINGERPRINT" ]; then missing="$missing fingerprint"; fi
+        if [ -n "$missing" ]; then
+          echo "::error::The deployment environment is missing:$missing"
+          exit 1
+        fi
+        if ! printf '%s' "$FINGERPRINT" | grep -qE 'SHA256:[A-Za-z0-9+/=]+'; then
+          echo "::error::The host key fingerprint must be the SHA256 fingerprint that ssh-keygen prints."
+          exit 1
+        fi
+
+    - name: Write the key and the known hosts file
+      shell: bash
+      env:
+        PRIVATE_KEY: ${{ inputs.private-key }}
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/polytronx-ssh"
+        install -d -m 700 "$dir"
+        # A key pasted from a Windows editor carries CRLF, which OpenSSH refuses.
+        printf '%s\n' "$PRIVATE_KEY" | tr -d '\r' >"$dir/id_ed25519"
+        chmod 600 "$dir/id_ed25519"
+        printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' >"$dir/known_hosts"
+        chmod 644 "$dir/known_hosts"
+        if ! ssh-keygen -l -f "$dir/id_ed25519" >/dev/null 2>&1; then
+          echo "::error::The value in SSH_PRIVATE_KEY is not a readable OpenSSH private key."
+          exit 1
+        fi
+
+    - name: Check the host key against the recorded fingerprint
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+        PORT: ${{ inputs.port }}
+        FINGERPRINT: ${{ inputs.fingerprint }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/polytronx-ssh"
+        expected="$(printf '%s' "$FINGERPRINT" | grep -oE 'SHA256:[A-Za-z0-9+/=]+' | head -n 1)"
+        # The known hosts file must hold this host, and the key in it must be the one
+        # that was read from the server console.
+        matches="$(ssh-keygen -F "$HOST" -f "$dir/known_hosts" 2>/dev/null || true)"
+        if [ -z "$matches" ]; then
+          matches="$(ssh-keygen -F "[$HOST]:$PORT" -f "$dir/known_hosts" 2>/dev/null || true)"
+        fi
+        if [ -z "$matches" ]; then
+          echo "::error::The known hosts file holds no record for $HOST."
+          exit 1
+        fi
+        recorded="$(printf '%s\n' "$matches" | grep -v '^#' | ssh-keygen -l -f - -E sha256 | awk '{print $2}' | sort -u)"
+        if ! printf '%s\n' "$recorded" | grep -qxF "$expected"; then
+          echo "::error::The known hosts file holds a different key for $HOST than the recorded fingerprint."
+          exit 1
+        fi
+        # The key the server presents now must be that same key.
+        live="$(ssh-keyscan -p "$PORT" -t ed25519 "$HOST" 2>/dev/null | grep -v '^#' | ssh-keygen -l -f - -E sha256 2>/dev/null | awk '{print $2}' | sort -u || true)"
+        if ! printf '%s\n' "$live" | grep -qxF "$expected"; then
+          echo "::error::The host key $HOST presents does not match the recorded fingerprint."
+          exit 1
+        fi
+        echo "host key verified: $expected"
+
+    - name: Write the SSH client configuration
+      id: client-config
+      shell: bash
+      env:
+        PORT: ${{ inputs.port }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/polytronx-ssh"
+        printf '%s\n' \
+          'Host *' \
+          "  IdentityFile $dir/id_ed25519" \
+          '  IdentitiesOnly yes' \
+          "  UserKnownHostsFile $dir/known_hosts" \
+          '  StrictHostKeyChecking yes' \
+          '  UpdateHostKeys no' \
+          '  PasswordAuthentication no' \
+          '  KbdInteractiveAuthentication no' \
+          '  BatchMode yes' \
+          '  ConnectTimeout 20' \
+          '  ServerAliveInterval 30' \
+          '  ServerAliveCountMax 4' \
+          "  Port $PORT" \
+          >"$dir/config"
+        chmod 600 "$dir/config"
+        echo "path=$dir/config" >>"$GITHUB_OUTPUT"
+        echo "SSH_CONFIG=$dir/config" >>"$GITHUB_ENV"
+
+    - name: Remove the private key
+      if: always()
+      shell: bash
+      run: |
+        rm -f "$RUNNER_TEMP/polytronx-ssh/id_ed25519"
