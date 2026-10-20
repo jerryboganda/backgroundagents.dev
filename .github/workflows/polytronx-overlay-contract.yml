@@ -21,5 +21,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Execute release allowlist contracts
         run: node --test deploy/polytronx/overlay-allowlist.test.mjs
+      - name: Verify exact inherited drift
+        run: node deploy/polytronx/verify-legacy-drift.mjs
