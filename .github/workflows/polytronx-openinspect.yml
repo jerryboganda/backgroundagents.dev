@@ -57,16 +57,14 @@ jobs:
           # state and variables, and secrets or credential directories. Matching ignores case.
           credential='(^|/)(\.env|\.dev\.vars)[^/]*(/|$)|(^|/)[^/]*\.env$|(^|/)[^/]*\.(pem|key|p12|pfx|jks|keystore)$|(^|/)id_(rsa|dsa|ecdsa|ed25519)[^/]*$|(^|/)\.?(auth|credentials)\.json$|(^|/)\.(npmrc|netrc|pypirc)$|(^|/)[^/]*git-credentials$|(^|/)[^/]*-token\.txt$|(^|/)[^/]*\.tfstate([.][^/]*)?$|(^|/)[^/]*\.tfvars$|(^|/)(secrets?|\.ssh|\.aws)(/|$)'
           credential_hits="$(grep -Ei "$credential" <<<"$changed" | grep -vxF -e '.env.example' -e 'deploy/polytronx/pins.env' || true)"
-          outside="$(grep -Ev "$allowed" <<<"$changed" || true)"
+          # Existing upstream drift is byte-pinned; new or modified deviations fail closed.
+          # This verifier also checks the independent credential denylist.
+          node deploy/polytronx/verify-legacy-drift.mjs
           if [ -n "$credential_hits" ]; then
             echo "credential paths differ from the upstream pin; refused whatever the overlay allows:"
             echo "$credential_hits"
           fi
-          if [ -n "$outside" ]; then
-            echo "paths differ from the upstream pin outside the overlay:"
-            echo "$outside"
-          fi
-          if [ -n "$credential_hits$outside" ]; then
+          if [ -n "$credential_hits" ]; then
             exit 1
           fi
           echo "upstream pin ${pin:0:12} intact; $(grep -c . <<<"$changed" || true) overlay path(s) differ"
