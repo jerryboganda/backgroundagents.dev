@@ -101,4 +101,4 @@ head-SHA results as evidence. Test role selection against each supported
 harness before changing a production control-plane setting.
 
 Related: [Child sessions](../packages/docs/content/docs/sessions/child-sessions.mdx),
-[Executor rotation](../deploy/polytronx/runbooks/executor-rotation.md).
+[Executor host](../deploy/polytronx/runbooks/executor-host.md).
