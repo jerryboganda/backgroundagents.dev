@@ -6,6 +6,8 @@ on:
       - ".github/workflows/polytronx-openinspect.yml"
       - ".github/workflows/polytronx-overlay-contract.yml"
       - "deploy/polytronx/overlay-allowlist.test.mjs"
+      - "deploy/polytronx/legacy-drift-pins.json"
+      - "deploy/polytronx/verify-legacy-drift.mjs"
   workflow_dispatch:
 
 permissions:
@@ -21,5 +23,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Execute release allowlist contracts
         run: node --test deploy/polytronx/overlay-allowlist.test.mjs
+      - name: Verify byte-pinned upstream drift
+        run: node deploy/polytronx/verify-legacy-drift.mjs

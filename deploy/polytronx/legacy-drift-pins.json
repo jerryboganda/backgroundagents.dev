@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "upstreamRevision": "02a6bbf1c2720699444d91867026e8b0111ed6fc",
+  "sourceHead": "d28f3b762471346f6b9839c7afa14146cb7501bf",
+  "notice": "Byte-pinned exceptions for existing deviations from the reviewed upstream revision. These hashes do not constitute a security review; review changes and deleted workflows before production.",
+  "exceptions": [
+    {
+      "path": ".github/workflows/aws-stack.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/ci-python.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/compose-smoke.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/coverage.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/deploy-aws.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/deploy-web.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".github/workflows/terraform.yml",
+      "status": "D",
+      "sha": null
+    },
+    {
+      "path": ".openinspect/setup.sh",
+      "status": "M",
+      "sha": "aecdcb7da24aaee7734cfb80940049fd51574209"
+    },
+    {
+      "path": "docs/AVAILABLE_MODELS.md",
+      "status": "M",
+      "sha": "8f4b1345a2171fe29f69f98edbea0b76bef273a1"
+    },
+    {
+      "path": "packages/control-plane/src/db/session-index.ts",
+      "status": "M",
+      "sha": "9932ee810a0c0cdd486480fb2623fa208d4ff006"
+    },
+    {
+      "path": "packages/control-plane/src/routes/session-index.test.ts",
+      "status": "M",
+      "sha": "4b7927583b7d5f8f2fbd9a4fbf4c8607eb750cdf"
+    },
+    {
+      "path": "packages/control-plane/src/routes/session-index.ts",
+      "status": "M",
+      "sha": "754198cd2bed44268e5b53eb1f66b07aca7c1a27"
+    },
+    {
+      "path": "packages/control-plane/src/sandbox/lifecycle/decisions-restore.test.ts",
+      "status": "A",
+      "sha": "73f4944f6adcda3f894b21133d5a2d0bc0c3c9d7"
+    },
+    {
+      "path": "packages/control-plane/src/sandbox/lifecycle/decisions.ts",
+      "status": "M",
+      "sha": "a014df611640b1c6dd4defdba3bff9045d590612"
+    },
+    {
+      "path": "packages/control-plane/src/sandbox/lifecycle/manager-shutdown.test.ts",
+      "status": "M",
+      "sha": "f1f2f934d1508578d9beabea0e57e624542a82d4"
+    },
+    {
+      "path": "packages/control-plane/src/sandbox/lifecycle/ports.ts",
+      "status": "M",
+      "sha": "4ab233fea1f6b93b95448a751d7bc00507512870"
+    },
+    {
+      "path": "packages/control-plane/src/sandbox/lifecycle/test-helpers.ts",
+      "status": "M",
+      "sha": "34f2fbb42e22453d4d6ec08678afee820d2d58a4"
+    },
+    {
+      "path": "packages/control-plane/src/session/contracts.ts",
+      "status": "M",
+      "sha": "e47dc29ae67aa76bf40d05060f9b93f903da3b6f"
+    },
+    {
+      "path": "packages/control-plane/src/session/http/handlers/session-lifecycle.handler.test.ts",
+      "status": "M",
+      "sha": "ca35ecbee10985191b805af01c3771f0ed8131bf"
+    },
+    {
+      "path": "packages/control-plane/src/session/http/handlers/session-lifecycle.handler.ts",
+      "status": "M",
+      "sha": "348f3816d430217d2c32da61296b4c315eea0175"
+    },
+    {
+      "path": "packages/control-plane/src/session/http/routes.ts",
+      "status": "M",
+      "sha": "55d4a1fc427d05e66ac0d289f431565b96679fc3"
+    },
+    {
+      "path": "packages/control-plane/src/session/message-queue.test.ts",
+      "status": "M",
+      "sha": "a08022ad0e3fe9673052d5e9bfb1f873dbb89936"
+    },
+    {
+      "path": "packages/control-plane/src/session/message-queue.ts",
+      "status": "M",
+      "sha": "009ed4b355f7b8b228d3d58e70c4fe322c46b5e4"
+    },
+    {
+      "path": "packages/docs/content/docs/models/choosing-a-model.mdx",
+      "status": "M",
+      "sha": "51507dfb826fa5a00a7c091794dfd0f965c89e66"
+    },
+    {
+      "path": "packages/shared/src/models.test.ts",
+      "status": "M",
+      "sha": "12dc854b209aa716a975afcc3b0dc9e4fc3ea27f"
+    },
+    {
+      "path": "packages/shared/src/models.ts",
+      "status": "M",
+      "sha": "bc4ea8963f0674027f6baa2551e9fcff71d4da2f"
+    },
+    {
+      "path": "packages/web/src/app/api/sessions/[id]/route.ts",
+      "status": "M",
+      "sha": "ffa753b7aab93d0bfc615025cb72049378de6497"
+    },
+    {
+      "path": "packages/web/src/components/delete-session-dialog.tsx",
+      "status": "A",
+      "sha": "e789234187ffb8a43b4bcf18b2bfc0fa1a94435e"
+    },
+    {
+      "path": "packages/web/src/components/session-list-item.test.tsx",
+      "status": "M",
+      "sha": "a738ec06853acb1c37d950f266ab8b5ba52c37d4"
+    },
+    {
+      "path": "packages/web/src/components/session-list-item.tsx",
+      "status": "M",
+      "sha": "f6306292f86bd1e06b18b1d4c8a35e4a0bf276e0"
+    },
+    {
+      "path": "packages/web/src/components/ui/icons.tsx",
+      "status": "M",
+      "sha": "6e004998d411d10349caad90c56fa49192e3bd18"
+    },
+    {
+      "path": "packages/web/src/lib/control-plane-transport-timeout.test.ts",
+      "status": "A",
+      "sha": "98f1620ec126b2a5e3008802e175a834539050db"
+    },
+    {
+      "path": "packages/web/src/lib/control-plane-transport.ts",
+      "status": "M",
+      "sha": "a645fbefa8d21c9410545e2e9e5b8ed8243faa5e"
+    },
+    {
+      "path": "packages/web/src/lib/delete-session.test.ts",
+      "status": "A",
+      "sha": "70e45dfa50ea99d64699f6c65bd822fc1e51034f"
+    },
+    {
+      "path": "packages/web/src/lib/delete-session.ts",
+      "status": "A",
+      "sha": "708590380994b5871573da71c5ee03202b4ba710"
+    },
+    {
+      "path": "scripts/opencode-model-sync.mjs",
+      "status": "A",
+      "sha": "12f02f93b681199cd8ce90bdaf98a7a36402663f"
+    },
+    {
+      "path": "scripts/opencode-model-sync.test.mjs",
+      "status": "A",
+      "sha": "9caea7a2137b2250c446b83cddd42aad9ddafdbb"
+    },
+    {
+      "path": "scripts/ship-dashboard.sh",
+      "status": "A",
+      "sha": "229b47028507ffb80e5978ce9185bc31123fcacf"
+    }
+  ]
+}
