@@ -7,6 +7,11 @@ on:
       - "packages/shared/src/types/session-api.ts"
       - "packages/shared/src/types/boundary-schemas.test.ts"
       - "packages/control-plane/src/harness-admission.ts"
+      - "packages/control-plane/src/agent-role-profiles.ts"
+      - "packages/control-plane/src/agent-role-profiles.test.ts"
+      - "packages/control-plane/src/node/config.ts"
+      - "packages/control-plane/src/types.ts"
+      - "docs/AGENT_ROLES.md"
       - "packages/control-plane/src/harness-admission.test.ts"
       - "packages/control-plane/src/routes/session-child-spawn.ts"
       - "packages/control-plane/src/router.spawn-child.test.ts"
@@ -46,6 +51,11 @@ jobs:
           packages/shared/src/types/boundary-schemas.test.ts
           packages/control-plane/src/harness-admission.ts
           packages/control-plane/src/harness-admission.test.ts
+          packages/control-plane/src/agent-role-profiles.ts
+          packages/control-plane/src/agent-role-profiles.test.ts
+          packages/control-plane/src/node/config.ts
+          packages/control-plane/src/types.ts
+          docs/AGENT_ROLES.md
           packages/control-plane/src/routes/session-child-spawn.ts
           packages/control-plane/src/router.spawn-child.test.ts
           packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js
@@ -57,6 +67,7 @@ jobs:
         run: >-
           npm run test -w @open-inspect/control-plane --
           src/harness-admission.test.ts
+          src/agent-role-profiles.test.ts
           src/router.spawn-child.test.ts
 
   python:
