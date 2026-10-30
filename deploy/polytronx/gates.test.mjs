@@ -58,6 +58,20 @@ function workflowStep(name) {
   return body.join("\n");
 }
 
+describe("compose-render CI", () => {
+  it("includes profiled docs in every production and rehearsal render", () => {
+    const script = [
+      workflowStep("Render with placeholder values, then without an image reference"),
+      workflowStep("Check the rendered configuration"),
+    ].join("\n");
+    const calls = [
+      ...script.matchAll(/docker compose -p polytronx-openinspect(?:-rehearsal)?\b[^\n]*/g),
+    ].map(([line]) => line);
+    assert.equal(calls.length, 6);
+    for (const call of calls) assert.match(call, /--profile docs/, call);
+  });
+});
+
 /** Runs provider_cap_problem against a control-plane.env with the given lines, and a stubbed curl. */
 function capGate(
   sb,

@@ -277,15 +277,22 @@ fi
 live_ports="$(docker ps --filter "label=com.docker.compose.project=$LIVE_PROJECT" --format '{{.Ports}}' 2>/dev/null || true)"
 ports=("$CONTROL_PLANE_LOOPBACK_PORT" "$WEB_LOOPBACK_PORT")
 [ -z "${DOCS_IMAGE:-}" ] || ports+=("$DOCS_LOOPBACK_PORT")
-for port in "${ports[@]}"; do
-  if [[ "$live_ports" == *"127.0.0.1:$port->"* ]]; then
-    pass "loopback port $port is held by this project (re-deploy)"
-  elif port_in_use "$port"; then
-    fail "loopback port $port is in use by another service; choose a free one in release.env, do not stop that service"
-  else
-    pass "loopback port $port is free"
-  fi
-done
+if [ "$CONTROL_PLANE_LOOPBACK_PORT" = "$WEB_LOOPBACK_PORT" ] ||
+  { [ -n "${DOCS_IMAGE:-}" ] &&
+    { [ "$DOCS_LOOPBACK_PORT" = "$CONTROL_PLANE_LOOPBACK_PORT" ] ||
+      [ "$DOCS_LOOPBACK_PORT" = "$WEB_LOOPBACK_PORT" ]; }; }; then
+  fail "control plane, web and enabled docs loopback ports must be distinct"
+else
+  for port in "${ports[@]}"; do
+    if [[ "$live_ports" == *"127.0.0.1:$port->"* ]]; then
+      pass "loopback port $port is held by this project (re-deploy)"
+    elif port_in_use "$port"; then
+      fail "loopback port $port is in use by another service; choose a free one in release.env, do not stop that service"
+    else
+      pass "loopback port $port is free"
+    fi
+  done
+fi
 
 if docker network inspect "$POLYTRONX_EDGE_NETWORK" >/dev/null 2>&1; then
   pass "edge network $POLYTRONX_EDGE_NETWORK exists"

@@ -36,11 +36,6 @@ while [ "$#" -gt 0 ]; do
     *) usage; die "unknown argument: $1" ;;
   esac
 done
-if [ -n "${DOCS_IMAGE:-}" ]; then
-  actual="$(docker image inspect -f '{{.Id}}' "$DOCS_IMAGE" 2>/dev/null || true)"
-  [ -n "${DOCS_IMAGE_ID:-}" ] && [ "$actual" = "$DOCS_IMAGE_ID" ] ||
-    die "DOCS target image is missing or differs from its recorded ID (nothing was changed)"
-fi
 [ -n "$TARGET" ] && [ -n "$SECRETS_DIR" ] && [ -n "$SOURCE_DIR" ] && [ -n "$STATE_DIR" ] ||
   { usage; die "missing a required option"; }
 [ "$CONFIRM" = "$LIVE_PROJECT" ] || die "pass --confirm $LIVE_PROJECT to roll back the live project"
@@ -55,12 +50,22 @@ if [ -f "$STATE_DIR/attempted.env" ]; then
   running_migrations="$(grep -m1 '^MIGRATIONS_LATEST=' "$STATE_DIR/attempted.env" | cut -d= -f2- || true)"
 fi
 
+# Missing docs keys in historical releases must not inherit the caller's environment.
+unset DOCS_IMAGE DOCS_IMAGE_ID DOCS_LOOPBACK_PORT
 load_release_file "$TARGET"
 RELEASE_FILE="$TARGET"
 # A release from before the executor CA mount has no CA line, and the compose render would fail on it.
 # The file is read, not the environment, which a caller's shell could have set.
 [ -n "$(env_value POLYTRONX_EXECUTOR_CA_FILE "$TARGET")" ] ||
   die "rollback target names no POLYTRONX_EXECUTOR_CA_FILE: it predates the executor CA mount. Add the public ca.crt path to it (runbooks/deploy-and-rollback.md); nothing was changed"
+
+if [ -n "${DOCS_IMAGE:-}" ] || [ -n "${DOCS_IMAGE_ID:-}" ] || [ -n "${DOCS_LOOPBACK_PORT:-}" ]; then
+  [ -n "${DOCS_IMAGE:-}" ] && [ -n "${DOCS_IMAGE_ID:-}" ] && [ -n "${DOCS_LOOPBACK_PORT:-}" ] ||
+    die "rollback target docs metadata is incomplete (nothing was changed)"
+  actual="$(docker image inspect -f '{{.Id}}' "$DOCS_IMAGE" 2>/dev/null || true)"
+  is_image_id "$DOCS_IMAGE_ID" && [ "$actual" = "$DOCS_IMAGE_ID" ] ||
+    die "DOCS target image is missing or differs from its recorded ID (nothing was changed)"
+fi
 
 for pair in CONTROL_PLANE WEB; do
   ref_var="${pair}_IMAGE"

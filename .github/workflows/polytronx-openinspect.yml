@@ -252,13 +252,13 @@ jobs:
           OBJECT_STORE_BUCKET=openinspect-media
           LITESTREAM_BUCKET=openinspect-backups
           EOF
-          docker compose -p polytronx-openinspect --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml config --quiet
-          docker compose -p polytronx-openinspect-rehearsal --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect-rehearsal --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml -f deploy/polytronx/compose.rehearsal.yml \
             config --quiet
           grep -v '^CONTROL_PLANE_IMAGE=' "$work/release.env" >"$work/release-no-image.env"
-          if docker compose -p polytronx-openinspect --env-file "$work/release-no-image.env" \
+          if docker compose -p polytronx-openinspect --profile docs --env-file "$work/release-no-image.env" \
             -f deploy/polytronx/compose.production.yml config --quiet 2>"$work/err.txt"; then
             echo "compose rendered without CONTROL_PLANE_IMAGE; the deployment would not fail closed"
             exit 1
@@ -270,7 +270,7 @@ jobs:
           fi
           echo "fail-closed: a missing CONTROL_PLANE_IMAGE stops the render"
           grep -v '^POLYTRONX_EXECUTOR_CA_FILE=' "$work/release.env" >"$work/release-no-ca.env"
-          if docker compose -p polytronx-openinspect --env-file "$work/release-no-ca.env" \
+          if docker compose -p polytronx-openinspect --profile docs --env-file "$work/release-no-ca.env" \
             -f deploy/polytronx/compose.production.yml config --quiet 2>"$work/ca-err.txt"; then
             echo "compose rendered without POLYTRONX_EXECUTOR_CA_FILE; the executor CA would not be required"
             exit 1
@@ -289,9 +289,9 @@ jobs:
         run: |
           set -euo pipefail
           work="$RUNNER_TEMP/render"
-          docker compose -p polytronx-openinspect --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml config --format json >"$work/production.json"
-          docker compose -p polytronx-openinspect-rehearsal --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect-rehearsal --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml -f deploy/polytronx/compose.rehearsal.yml \
             config --format json >"$work/rehearsal.json"
           node deploy/polytronx/rendered-config.mjs production "$work/production.json"
