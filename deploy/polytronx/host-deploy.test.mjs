@@ -87,7 +87,8 @@ describe("the host deployment scripts", () => {
   });
 
   it("builds and records the docs image alongside the dashboard", () => {
-    assert.match(dashboard, /docker build -q -f packages\/docs\/Dockerfile/);
+    assert.match(dashboard, /docker build --progress=plain -f packages\/docs\/Dockerfile/);
+    assert.match(dashboard, /tail -n 80 \/tmp\/polytronx-build-docs\.log/);
     assert.match(dashboard, /set_release_value DOCS_IMAGE /);
     assert.match(dashboard, /set_release_value DOCS_IMAGE_ID /);
     assert.doesNotMatch(dashboard, /prepare_prior_docs_release/);
