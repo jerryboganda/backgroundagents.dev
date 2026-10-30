@@ -82,7 +82,7 @@
     {
       "path": "packages/control-plane/src/node/crash-recovery.test.ts",
       "status": "M",
-      "sha": "1d5e899ca9f7700759eb66bb2e74930944be2f2b"
+      "sha": "f48fa434cd15ac275121f01f57c2f6d125259e66"
     },
     {
       "path": "packages/control-plane/src/node/crash-recovery.ts",
@@ -100,9 +100,14 @@
       "sha": "af7a044138cc0df912b892434a17ae8fad7b0480"
     },
     {
+      "path": "packages/control-plane/src/node/host.test.ts",
+      "status": "M",
+      "sha": "ec298ce9ca9776a5c14828a3aaecd50d6d89e7f0"
+    },
+    {
       "path": "packages/control-plane/src/node/session-runtime-registry.test.ts",
       "status": "M",
-      "sha": "1eddaf699364190ab99a9af5c2fb8a865ea3e95d"
+      "sha": "7d6167f9c4bda35ca2a0f36275d05f4427e64fe9"
     },
     {
       "path": "packages/control-plane/src/node/session-store.test.ts",
@@ -472,7 +477,7 @@
     {
       "path": "packages/web/vitest.config.ts",
       "status": "M",
-      "sha": "4b3099d5bb676e3118270e002d2e246fa32bf742"
+      "sha": "46d7a4ba98170b44712b17f6f164e1a29a20d05e"
     },
     {
       "path": "scripts/opencode-model-sync.mjs",
