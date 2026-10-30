@@ -7,7 +7,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
 COPY packages/docs/package.json packages/docs/
-RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --workspace=@open-inspect/docs
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --install-strategy=nested --workspace=@open-inspect/docs
 COPY packages/docs/ packages/docs/
 RUN npm run build -w @open-inspect/docs
 
