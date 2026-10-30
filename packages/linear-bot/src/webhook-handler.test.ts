@@ -791,7 +791,7 @@ describe("handleAgentSessionEvent environment targets", () => {
 
   it("logs prompt length when the control plane rejects the prompt", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const { kv } = createFakeKV({
+    const { kv, store } = createFakeKV({
       "oauth:client-credentials:org-1": validToken(),
       "config:project-repos": JSON.stringify({
         "project-1": { owner: "acme", name: "backend" },
@@ -804,15 +804,167 @@ describe("handleAgentSessionEvent environment targets", () => {
     const webhook = makeWebhook();
     webhook.promptContext = "A normal-size prompt";
 
-    await handleAgentSessionEvent(webhook, env, "trace-prompt-failure");
+    await expect(handleAgentSessionEvent(webhook, env, "trace-prompt-failure")).rejects.toThrow(
+      "Linear initial prompt failed: HTTP 400"
+    );
 
     expect(createSessionBody(fetchMock)).not.toBeNull();
+    expect(JSON.parse(store.get("issue:issue-1") ?? "null")).toMatchObject({
+      sessionId: "session-xyz",
+      pendingInitialPrompt: { actorUserId: "human-user-1" },
+    });
     expect(errorSpy.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual(
       expect.objectContaining({
         msg: "control_plane.send_prompt",
         prompt_length: buildPromptContextPrompt(webhook.promptContext).length,
         http_status: 400,
       })
+    );
+  });
+
+  it("retries the first prompt in the created session without creating another session", async () => {
+    const { kv, store } = createFakeKV({
+      "oauth:client-credentials:org-1": validToken(),
+      "config:project-repos": JSON.stringify({ "project-1": { owner: "acme", name: "backend" } }),
+    });
+    const env = makeLinearBotEnv(kv);
+    const fetchMock = stubControlPlane(env);
+    const originalFetch = fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL
+    ) => Promise<Response>;
+    let promptAttempts = 0;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/prompt") && promptAttempts++ === 0) {
+        return Response.json({ error: "unavailable" }, { status: 503 });
+      }
+      return originalFetch(input);
+    });
+    const webhook = makeWebhook();
+
+    await expect(handleAgentSessionEvent(webhook, env, "delivery-initial")).rejects.toThrow(
+      "Linear initial prompt failed: HTTP 503"
+    );
+    const pending = JSON.parse(store.get("issue:issue-1") ?? "null") as Record<string, unknown>;
+    expect(pending).toMatchObject({
+      sessionId: "session-xyz",
+      initialDeliveryId: "delivery-initial",
+      pendingInitialPrompt: { actorUserId: "human-user-1" },
+    });
+
+    await handleAgentSessionEvent(webhook, env, "delivery-initial");
+    await handleAgentSessionEvent(webhook, env, "delivery-initial");
+
+    const calls = fetchMock.mock.calls;
+    expect(calls.filter(([url]) => String(url) === "https://internal/sessions")).toHaveLength(1);
+    const prompts = calls.filter(([url]) => String(url).endsWith("/prompt"));
+    expect(prompts).toHaveLength(2);
+    const firstBody = String((prompts[0]?.[1] as RequestInit).body);
+    expect((prompts[1]?.[1] as RequestInit).body).toBe(firstBody);
+    expect(JSON.parse(firstBody)).toMatchObject({
+      clientRequestId: "linear:delivery-initial",
+      callbackContext: { issueId: "issue-1" },
+    });
+    expect(JSON.parse(store.get("issue:issue-1") ?? "null")).not.toHaveProperty(
+      "pendingInitialPrompt"
+    );
+  });
+
+  it("replays the same creation key after control-plane success and lost KV mapping", async () => {
+    const { kv, store } = createFakeKV({
+      "oauth:client-credentials:org-1": validToken(),
+      "config:project-repos": JSON.stringify({ "project-1": { owner: "acme", name: "backend" } }),
+    });
+    const env = makeLinearBotEnv(kv);
+    const fetchMock = stubControlPlane(env);
+    vi.mocked(kv.put).mockRejectedValueOnce(new Error("crash before KV mapping"));
+    const webhook = makeWebhook();
+
+    await expect(handleAgentSessionEvent(webhook, env, "delivery-initial")).rejects.toThrow(
+      "crash before KV mapping"
+    );
+    expect(store.has("issue:issue-1")).toBe(false);
+    await handleAgentSessionEvent(webhook, env, "delivery-initial");
+
+    const creations = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "https://internal/sessions"
+    );
+    expect(creations).toHaveLength(2);
+    expect(creations.map(([, init]) => JSON.parse(String(init?.body)).idempotencyKey)).toEqual([
+      "linear:org-1:issue-1:agent-session-1",
+      "linear:org-1:issue-1:agent-session-1",
+    ]);
+    expect(JSON.parse(store.get("issue:issue-1") ?? "null")).toMatchObject({
+      sessionId: "session-xyz",
+      initialDeliveryId: "delivery-initial",
+    });
+    expect(JSON.parse(store.get("issue:issue-1") ?? "null")).not.toHaveProperty(
+      "pendingInitialPrompt"
+    );
+    const prompts = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/prompt"));
+    expect(prompts).toHaveLength(1);
+    expect(JSON.parse(String(prompts[0]?.[1]?.body)).clientRequestId).toBe(
+      "linear:delivery-initial"
+    );
+  });
+
+  it("retries a transient issue mapping read failure before creating a session", async () => {
+    const { kv } = createFakeKV();
+    vi.mocked(kv.get).mockRejectedValueOnce(new Error("KV unavailable"));
+    const env = makeLinearBotEnv(kv);
+
+    await expect(handleAgentSessionEvent(makeWebhook(), env, "delivery-initial")).rejects.toThrow(
+      "KV unavailable"
+    );
+    expect(env.CONTROL_PLANE.fetch).not.toHaveBeenCalled();
+  });
+
+  it("propagates failed follow-up prompts so the delivery can retry", async () => {
+    const { kv } = createFakeKV({
+      "oauth:client-credentials:org-1": validToken(),
+      "issue:issue-1": JSON.stringify({
+        sessionId: "session-xyz",
+        issueId: "issue-1",
+        issueIdentifier: "ENG-42",
+        linearTeamId: "team-1",
+        repoOwner: "acme",
+        repoName: "backend",
+        model: "anthropic/claude-haiku-4-5",
+        createdAt: Date.now(),
+      }),
+    });
+    const env = makeLinearBotEnv(kv);
+    const fetchMock = (env.CONTROL_PLANE as unknown as { fetch: ReturnType<typeof vi.fn> }).fetch;
+    let promptAttempts = 0;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/integration-settings/")) return Response.json({ config: null });
+      if (url.includes("/events?")) return Response.json({ events: [] });
+      if (url.endsWith("/prompt")) {
+        return promptAttempts++ === 0
+          ? Response.json({ error: "unavailable" }, { status: 503 })
+          : Response.json({ ok: true });
+      }
+      throw new Error(`Unexpected control-plane fetch to ${url}`);
+    });
+    const webhook = makeWebhook();
+    webhook.action = "prompted";
+    webhook.agentActivity = {
+      userId: "follow-up-human-user",
+      content: { type: "prompt", body: "Please continue." },
+    };
+
+    await expect(handleAgentSessionEvent(webhook, env, "delivery-follow-up")).rejects.toThrow(
+      "Linear follow-up prompt failed: HTTP 503"
+    );
+    await handleAgentSessionEvent(webhook, env, "delivery-follow-up");
+    const prompts = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/prompt"));
+    expect(prompts).toHaveLength(2);
+    expect(JSON.parse(String(prompts[0]?.[1]?.body))).toMatchObject({
+      clientRequestId: "linear:delivery-follow-up",
+    });
+    expect(prompts[1]?.[1]?.body).toBe(prompts[0]?.[1]?.body);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "https://internal/sessions")).toBe(
+      false
     );
   });
 

@@ -35,7 +35,30 @@ vi.mock("@open-inspect/shared/slack", async () => {
   };
 });
 
-import app from "./index";
+import worker from "./index";
+import { handleSlackEvent } from "./events/dispatcher";
+// Existing end-to-end event tests use an in-memory queue adapter to exercise
+// dispatch after durable enqueue; queue ownership is tested separately.
+const app = {
+  fetch: async (request: Request, env: Env, ctx: ReturnType<typeof makeCtx>) => {
+    const originalSend = env.SLACK_EVENTS_QUEUE.send;
+    env.SLACK_EVENTS_QUEUE.send = (async ({
+      payload,
+      id,
+    }: Parameters<Env["SLACK_EVENTS_QUEUE"]["send"]>[0]) => {
+      ctx.waitUntil(
+        Promise.resolve().then(() =>
+          handleSlackEvent(payload!, env, id, (task) => ctx.waitUntil(task))
+        )
+      );
+    }) as unknown as Env["SLACK_EVENTS_QUEUE"]["send"];
+    try {
+      return await worker.fetch(request, env, ctx);
+    } finally {
+      env.SLACK_EVENTS_QUEUE.send = originalSend;
+    }
+  },
+};
 import { clearBotUserIdCache } from "./bot-identity";
 import { clearLocalCache } from "./classifier/repos";
 import { clearEnvironmentsLocalCache } from "./classifier/environments";
@@ -125,6 +148,8 @@ function makeEnv() {
   });
 
   const env = {
+    WEBHOOK_DB: {} as D1Database,
+    SLACK_EVENTS_QUEUE: { send: vi.fn(async () => {}) } as unknown as Env["SLACK_EVENTS_QUEUE"],
     SLACK_KV: createMockKV() as unknown as KVNamespace,
     SLACK_COMPLETION_QUEUE: {
       send: vi.fn(),
@@ -607,11 +632,9 @@ describe("POST /events", () => {
     expect(env.CONTROL_PLANE.fetch).not.toHaveBeenCalled();
     expect(mockGetUserInfo).not.toHaveBeenCalled();
     expect(slackFetch).not.toHaveBeenCalled();
-    expect((env.SLACK_KV as unknown as { put: ReturnType<typeof vi.fn> }).put).toHaveBeenCalledWith(
-      expect.stringMatching(/^event:/),
-      "1",
-      { expirationTtl: 3600 }
-    );
+    expect(
+      (env.SLACK_KV as unknown as { put: ReturnType<typeof vi.fn> }).put
+    ).not.toHaveBeenCalled();
 
     slackFetch.mockRestore();
   });

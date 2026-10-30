@@ -6,7 +6,12 @@
  */
 
 import { Hono } from "hono";
-import type { Env } from "./types";
+import {
+  enqueueWebhookPayload,
+  resolveWebhookPayload,
+  WEBHOOK_REPLAY_RETENTION_MS,
+} from "@open-inspect/shared/webhook-queue";
+import type { Env, GitHubWebhookMessage } from "./types";
 import type { Logger } from "./logger";
 import { createLogger, parseLogLevel } from "./logger";
 import { verifyWebhookSignature } from "./verify";
@@ -31,22 +36,23 @@ import {
 } from "./handlers";
 import { createKvCacheStore } from "@open-inspect/shared/cache-store";
 import { toAutofixEnvelope } from "./autofix-ingress";
+import {
+  claimDelivery,
+  finalizeDelivery,
+  isDeliveryProcessed,
+  pruneExpiredDeliveries,
+  releaseDelivery,
+  renewDelivery,
+} from "./delivery-claims";
 
 const app = new Hono<{ Bindings: Env }>();
-const DELIVERY_DEDUPE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-const DELIVERY_PROCESSING_TTL_MS = 5 * 60 * 1_000;
-const DELIVERY_STATUS_PROCESSING = "processing";
+const DELIVERY_DEDUPE_TTL_MS = WEBHOOK_REPLAY_RETENTION_MS;
 const DELIVERY_STATUS_PROCESSED = "processed";
-
-function getDeliveryDedupeKey(deliveryId: string): string {
-  return `delivery:${deliveryId}`;
-}
 
 app.get("/health", (c) => c.json({ status: "healthy", service: "open-inspect-github-bot" }));
 
 app.post("/webhooks/github", async (c) => {
   const log = createLogger("webhook", {}, parseLogLevel(c.env.LOG_LEVEL));
-  const cacheStore = createKvCacheStore(c.env.GITHUB_KV);
 
   const rawBody = await c.req.text();
   const signature = c.req.header("X-Hub-Signature-256") ?? null;
@@ -59,27 +65,13 @@ app.post("/webhooks/github", async (c) => {
     return c.json({ error: "invalid signature" }, 401);
   }
 
-  let dedupeKey: string | null = null;
-  if (deliveryId) {
-    dedupeKey = getDeliveryDedupeKey(deliveryId);
-    const existing = await cacheStore.get(dedupeKey);
-    if (existing) {
-      log.info("webhook.duplicate_delivery", {
-        delivery_id: deliveryId,
-        event_type: event,
-        dedupe_status: existing,
-      });
-      return c.json({ ok: true, duplicate: true });
-    }
-
-    await cacheStore.put(dedupeKey, DELIVERY_STATUS_PROCESSING, {
-      ttlMs: DELIVERY_PROCESSING_TTL_MS,
-    });
-  } else {
-    log.warn("webhook.delivery_id_missing", { event_type: event });
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "invalid payload" }, 400);
   }
 
-  const payload: unknown = JSON.parse(rawBody);
   const summaryResult = webhookSummaryPayloadSchema.safeParse(payload);
   const summary = summaryResult.success ? summaryResult.data : null;
   const actionResult = webhookActionPayloadSchema.safeParse(payload);
@@ -96,65 +88,104 @@ app.post("/webhooks/github", async (c) => {
     action,
   });
 
-  const autofixEnvelope = toAutofixEnvelope({
-    event,
-    payload,
-    deliveryId: deliveryId ?? `missing:${traceId}`,
-    botUsername: c.env.GITHUB_BOT_USERNAME,
-    receivedAt: new Date(),
-  });
-  if (autofixEnvelope) {
-    try {
-      await c.env.AUTOFIX_QUEUE.send(autofixEnvelope);
-    } catch (err) {
-      log.error("webhook.autofix_queue_failed", {
-        trace_id: traceId,
-        delivery_id: deliveryId,
-        error: err instanceof Error ? err : new Error(String(err)),
-      });
-    }
+  // Queue send is the acceptance boundary: an HTTP success means durable intake.
+  const id =
+    deliveryId ??
+    "body:" +
+      Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(event + rawBody))
+        ),
+        (byte) => byte.toString(16).padStart(2, "0")
+      ).join("");
+  try {
+    await enqueueWebhookPayload(
+      c.env.WEBHOOK_QUEUE,
+      c.env.WEBHOOK_PAYLOADS,
+      { deliveryId: id, traceId, event: event ?? undefined, receivedAt: new Date().toISOString() },
+      payload
+    );
+  } catch (error) {
+    log.error("webhook.enqueue_failed", { trace_id: traceId, delivery_id: id, error });
+    return c.json({ error: "Webhook queue unavailable" }, 503);
   }
-
-  c.executionCtx.waitUntil(
-    handleWebhook(c.env, log, event, payload, traceId, deliveryId)
-      .then(async () => {
-        if (!dedupeKey) return;
-
-        try {
-          await cacheStore.put(dedupeKey, DELIVERY_STATUS_PROCESSED, {
-            ttlMs: DELIVERY_DEDUPE_TTL_MS,
-          });
-        } catch (err) {
-          log.warn("webhook.dedupe_finalize_failed", {
-            trace_id: traceId,
-            delivery_id: deliveryId,
-            error: err instanceof Error ? err : new Error(String(err)),
-          });
-        }
-      })
-      .catch(async (err) => {
-        if (dedupeKey) {
-          try {
-            await cacheStore.delete(dedupeKey);
-          } catch (deleteErr) {
-            log.warn("webhook.dedupe_clear_failed", {
-              trace_id: traceId,
-              delivery_id: deliveryId,
-              error: deleteErr instanceof Error ? deleteErr : new Error(String(deleteErr)),
-            });
-          }
-        }
-
-        log.error("webhook.processing_error", {
-          trace_id: traceId,
-          delivery_id: deliveryId,
-          error: err instanceof Error ? err : new Error(String(err)),
-        });
-      })
-  );
-
   return c.json({ ok: true });
 });
+
+export async function consumeGitHubWebhooks(
+  batch: MessageBatch<GitHubWebhookMessage>,
+  env: Env
+): Promise<void> {
+  const log = createLogger("webhook", {}, parseLogLevel(env.LOG_LEVEL));
+  for (const message of batch.messages) {
+    const { deliveryId, traceId, event, receivedAt } = message.body;
+    const token = crypto.randomUUID();
+    let claimed = false;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let heartbeatPending: Promise<void> = Promise.resolve();
+    let ownershipLost = false;
+    try {
+      claimed = await claimDelivery(env, deliveryId, token);
+      if (!claimed) {
+        if (await isDeliveryProcessed(env, deliveryId)) message.ack();
+        else message.retry({ delaySeconds: 60 });
+        continue;
+      }
+
+      heartbeat = setInterval(() => {
+        heartbeatPending = heartbeatPending
+          .then(async () => {
+            if (ownershipLost) return;
+            if (!(await renewDelivery(env, deliveryId, token))) {
+              throw new Error("GitHub delivery ownership lost during heartbeat");
+            }
+          })
+          .catch((error) => {
+            ownershipLost = true;
+            log.error("webhook.heartbeat_failed", { delivery_id: deliveryId, error });
+          });
+      }, 30_000);
+
+      const payload = await resolveWebhookPayload(env.WEBHOOK_PAYLOADS, message.body);
+      const autofixEnvelope = toAutofixEnvelope({
+        event,
+        payload,
+        deliveryId,
+        botUsername: env.GITHUB_BOT_USERNAME,
+        receivedAt: new Date(receivedAt),
+      });
+      if (autofixEnvelope) await env.AUTOFIX_QUEUE.send(autofixEnvelope);
+      await handleWebhook(env, log, event, payload, traceId, deliveryId);
+
+      clearInterval(heartbeat);
+      await heartbeatPending;
+      if (ownershipLost) throw new Error("GitHub delivery ownership lost");
+      await finalizeDelivery(env, deliveryId, token);
+      message.ack();
+      try {
+        await pruneExpiredDeliveries(env);
+      } catch (error) {
+        log.warn("webhook.dedupe_prune_failed", { trace_id: traceId, error });
+      }
+    } catch (error) {
+      log.error("webhook.processing_error", { trace_id: traceId, delivery_id: deliveryId, error });
+      if (claimed) {
+        try {
+          await releaseDelivery(env, deliveryId, token);
+        } catch (releaseError) {
+          log.warn("webhook.dedupe_clear_failed", {
+            trace_id: traceId,
+            delivery_id: deliveryId,
+            error: releaseError,
+          });
+        }
+      }
+      message.retry({ delaySeconds: 60 });
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+    }
+  }
+}
 
 /** Skips that already posted a PR comment explaining why no session started. */
 const COMMENTED_SKIP_REASONS: ReadonlySet<string> = new Set([
@@ -335,4 +366,4 @@ function dispatchHandler(
   }
 }
 
-export default app;
+export default { fetch: app.fetch, queue: consumeGitHubWebhooks };

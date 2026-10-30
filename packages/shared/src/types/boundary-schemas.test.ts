@@ -540,6 +540,22 @@ describe("boundary schemas", () => {
       expect(result.success).toBe(true);
     });
 
+    it("preserves a prompt idempotency key and rejects invalid keys", () => {
+      expect(
+        sendPromptRequestSchema.parse({
+          content: "Retry safely",
+          clientRequestId: "linear:delivery-1",
+        })
+      ).toMatchObject({ clientRequestId: "linear:delivery-1" });
+      expect(
+        sendPromptRequestSchema.safeParse({ content: "Retry", clientRequestId: "" }).success
+      ).toBe(false);
+      expect(
+        sendPromptRequestSchema.safeParse({ content: "Retry", clientRequestId: "x".repeat(129) })
+          .success
+      ).toBe(false);
+    });
+
     it("rejects a malformed prompt request", () => {
       expect(sendPromptRequestSchema.safeParse({ content: 123 }).success).toBe(false);
       expect(sendPromptRequestSchema.safeParse({ source: "web" }).success).toBe(false);

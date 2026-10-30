@@ -158,18 +158,15 @@ under 72 characters. Use the PR body for details, not the commit message.
 
 ## CI/CD
 
-Pushing to `main` auto-deploys changed services:
+Pull requests and pushes to `main` run `.github/workflows/ci.yml` (lint, typecheck, TypeScript
+package tests, and deployment contract tests). Production Terraform is **not** automatically
+applied: `.github/workflows/terraform.yml` is absent. To release the Cloudflare control plane, D1
+migrations, Modal data plane, or a Cloudflare-hosted web app, review a Terraform plan and run
+`terraform apply` manually from `terraform/environments/production` with production credentials and
+the remote state backend configured. See `terraform/README.md` for the manual procedure.
 
-- **Terraform** → control plane + D1 migrations + web app if `web_platform = "cloudflare"`
-  (triggers: `terraform/`, `packages/*/`)
-- **Vercel** → web app when `web_platform = "vercel"` (triggers: `packages/web/`,
-  `packages/shared/`)
-- **Vercel Docs** → public documentation is **not** auto-deployed; run the `Deploy Docs` workflow
-  manually on `main` (requires the dedicated docs project secrets described in
-  `packages/docs/README.md`)
-- **Modal** → data plane (triggers: `packages/modal-infra/`, deployed via Terraform apply)
-
-CI runs lint, typecheck, and tests for all TypeScript and Python packages on every push and PR.
+Vercel web deployments depend on the separately configured Vercel integration. Public docs require
+the manually triggered `Deploy Docs` workflow on `main` and its dedicated project secrets.
 
 ## Further Reading
 
@@ -180,4 +177,4 @@ CI runs lint, typecheck, and tests for all TypeScript and Python packages on eve
 - [packages/control-plane/README.md](packages/control-plane/README.md) — API reference, WebSocket
   protocol, D1 schema, security model
 - [packages/modal-infra/README.md](packages/modal-infra/README.md) — sandbox internals, Modal
-  deployment, endpoint URLs
+  deployment, endpoint URLs acceptance: npm run build

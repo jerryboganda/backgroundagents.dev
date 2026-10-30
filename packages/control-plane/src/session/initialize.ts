@@ -32,6 +32,7 @@ function hasBranchContext(value: string | null | undefined): boolean {
  */
 export interface SessionInitInput {
   sessionId: string;
+  creationIdempotencyKey?: string;
 
   // Repository
   repoOwner: string | null;
@@ -169,6 +170,33 @@ export async function initializeSession(
     });
   }
 
+  const initPayload = JSON.stringify({
+    sessionName: input.sessionId,
+    repoOwner: input.repoOwner,
+    repoName: input.repoName,
+    repoId: input.repoId,
+    defaultBranch,
+    branch,
+    repositories,
+    environmentId: input.environmentId ?? null,
+    title: input.title,
+    harness: input.harness,
+    model: input.model,
+    reasoningEffort: input.reasoningEffort,
+    userId: input.participantUserId,
+    canonicalUserId: input.participantCanonicalUserId,
+    scmLogin: input.scmLogin,
+    scmName: input.scmName,
+    scmEmail: input.scmEmail,
+    scmUserId: input.scmUserId,
+    codeServerEnabled: input.codeServerEnabled,
+    vncEnabled: input.vncEnabled,
+    sandboxSettings,
+    parentSessionId: input.parentSessionId,
+    spawnSource: input.spawnSource,
+    spawnDepth: input.spawnDepth,
+  });
+
   // Step 1: D1 index (must succeed before DO init starts sandbox warming)
   const sessionStore = new SessionIndexStore(ctx.db);
   if (input.visibility === "private" && !input.platformUserId) {
@@ -176,6 +204,8 @@ export async function initializeSession(
   }
   await sessionStore.create({
     id: input.sessionId,
+    creationIdempotencyKey: input.creationIdempotencyKey,
+    creationInitPayload: input.creationIdempotencyKey ? initPayload : undefined,
     title: input.title || null,
     repoOwner: input.repoOwner,
     repoName: input.repoName,
@@ -219,32 +249,7 @@ export async function initializeSession(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionName: input.sessionId,
-          repoOwner: input.repoOwner,
-          repoName: input.repoName,
-          repoId: input.repoId,
-          defaultBranch,
-          branch,
-          repositories,
-          environmentId: input.environmentId ?? null,
-          title: input.title,
-          harness: input.harness,
-          model: input.model,
-          reasoningEffort: input.reasoningEffort,
-          userId: input.participantUserId,
-          canonicalUserId: input.participantCanonicalUserId,
-          scmLogin: input.scmLogin,
-          scmName: input.scmName,
-          scmEmail: input.scmEmail,
-          scmUserId: input.scmUserId,
-          codeServerEnabled: input.codeServerEnabled,
-          vncEnabled: input.vncEnabled,
-          sandboxSettings,
-          parentSessionId: input.parentSessionId,
-          spawnSource: input.spawnSource,
-          spawnDepth: input.spawnDepth,
-        }),
+        body: initPayload,
       }
     );
   } catch (transportError) {
@@ -265,6 +270,49 @@ export async function initializeSession(
   }
 
   return { sessionId: input.sessionId, status: "created" };
+}
+
+/** Reconcile a Linear D1 reservation after a lost response or interrupted DO init. */
+export async function recoverIdempotentSessionInitialization(
+  env: Env,
+  sessionId: string,
+  ctx: RequestContext
+): Promise<void> {
+  const sessionStore = new SessionIndexStore(ctx.db);
+  const snapshot = await sessionStore.getCreationInitializationSnapshot(sessionId);
+  if (!snapshot) throw new Error("Session index disappeared during initialization recovery");
+  if (snapshot.status === "failed" && snapshot.statusRevision !== 0) {
+    throw new Error("Session failed after initialization");
+  }
+
+  const client = createSessionRuntimeClient(env, ctx);
+  const state = await client.fetch(sessionId, SessionInternalPaths.state);
+  if (state.status === 404) {
+    if (
+      snapshot.statusRevision !== 0 ||
+      (snapshot.status !== "created" && snapshot.status !== "failed") ||
+      !snapshot.payload
+    ) {
+      throw new Error("Session cannot be safely reinitialized from its D1 reservation");
+    }
+    const initialized = await client.fetch(sessionId, SessionInternalPaths.init, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: snapshot.payload,
+    });
+    if (!initialized.ok) {
+      throw new Error(`Session DO initialization retry failed: ${initialized.status}`);
+    }
+  } else if (!state.ok) {
+    throw new Error(`Session DO state check failed: ${state.status}`);
+  } else if (snapshot.status === "failed") {
+    const doState = (await state.json()) as { status?: string };
+    if (doState.status !== "created") throw new Error("Session DO has already failed");
+  }
+
+  if (state.status === 404 || snapshot.status === "failed") {
+    await sessionStore.confirmCreationInitialized(sessionId);
+  }
 }
 
 /**

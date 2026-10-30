@@ -16,6 +16,18 @@ resource "cloudflare_queue" "github_autofix_dlq" {
   queue_name = "open-inspect-github-autofix-dlq-${local.name_suffix}"
 }
 
+resource "cloudflare_queue" "github_webhooks" {
+  count      = var.enable_github_bot ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = "open-inspect-github-webhooks-${local.name_suffix}"
+}
+
+resource "cloudflare_queue" "github_webhooks_dlq" {
+  count      = var.enable_github_bot ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = "open-inspect-github-webhooks-dlq-${local.name_suffix}"
+}
+
 # Build github-bot worker bundle (only runs during apply, not plan)
 resource "null_resource" "github_bot_build" {
   count = var.enable_github_bot ? 1 : 0
@@ -45,6 +57,18 @@ module "github_bot_worker" {
     }
   }
 
+  d1_databases = {
+    DB = {
+      database_id = cloudflare_d1_database.main.id
+    }
+  }
+
+  r2_buckets = {
+    WEBHOOK_PAYLOADS = {
+      bucket_name = cloudflare_r2_bucket.webhook_payloads.name
+    }
+  }
+
   service_bindings = {
     CONTROL_PLANE = {
       service_name = "open-inspect-control-plane-${local.name_suffix}"
@@ -56,6 +80,9 @@ module "github_bot_worker" {
   queue_bindings = {
     AUTOFIX_QUEUE = {
       queue_name = cloudflare_queue.github_autofix[0].queue_name
+    }
+    WEBHOOK_QUEUE = {
+      queue_name = cloudflare_queue.github_webhooks[0].queue_name
     }
   }
 
@@ -77,7 +104,24 @@ module "github_bot_worker" {
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]
 
-  depends_on = [null_resource.github_bot_build[0], module.control_plane_worker, module.github_kv[0]]
+  depends_on = [null_resource.github_bot_build[0], module.control_plane_worker, module.github_kv[0], null_resource.d1_migrations, cloudflare_r2_bucket_lifecycle.webhook_payloads]
+}
+
+resource "cloudflare_queue_consumer" "github_webhooks" {
+  count             = var.enable_github_bot ? 1 : 0
+  account_id        = var.cloudflare_account_id
+  queue_id          = cloudflare_queue.github_webhooks[0].queue_id
+  type              = "worker"
+  script_name       = module.github_bot_worker[0].worker_name
+  dead_letter_queue = cloudflare_queue.github_webhooks_dlq[0].queue_name
+  settings = {
+    batch_size       = 1
+    max_wait_time_ms = 1000
+    max_concurrency  = 5
+    max_retries      = 50
+    retry_delay      = 60
+  }
+  depends_on = [module.github_bot_worker]
 }
 
 resource "cloudflare_queue_consumer" "github_autofix" {

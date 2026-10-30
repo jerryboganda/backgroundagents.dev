@@ -9,6 +9,18 @@ resource "cloudflare_queue" "slack_completion_delivery" {
   queue_name = "open-inspect-slack-completion-${local.name_suffix}"
 }
 
+resource "cloudflare_queue" "slack_events" {
+  count      = var.enable_slack_bot ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = "open-inspect-slack-events-${local.name_suffix}"
+}
+
+resource "cloudflare_queue" "slack_events_dlq" {
+  count      = var.enable_slack_bot ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = "open-inspect-slack-events-dlq-${local.name_suffix}"
+}
+
 resource "cloudflare_queue" "slack_completion_delivery_dlq" {
   count = var.enable_slack_bot ? 1 : 0
 
@@ -47,6 +59,18 @@ module "slack_bot_worker" {
     }
   }
 
+  d1_databases = {
+    WEBHOOK_DB = {
+      database_id = cloudflare_d1_database.main.id
+    }
+  }
+
+  r2_buckets = {
+    WEBHOOK_PAYLOADS = {
+      bucket_name = cloudflare_r2_bucket.webhook_payloads.name
+    }
+  }
+
   service_bindings = {
     CONTROL_PLANE = {
       service_name = "open-inspect-control-plane-${local.name_suffix}"
@@ -58,6 +82,9 @@ module "slack_bot_worker" {
   queue_bindings = {
     SLACK_COMPLETION_QUEUE = {
       queue_name = cloudflare_queue.slack_completion_delivery[0].queue_name
+    }
+    SLACK_EVENTS_QUEUE = {
+      queue_name = cloudflare_queue.slack_events[0].queue_name
     }
   }
 
@@ -84,8 +111,26 @@ module "slack_bot_worker" {
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]
+  cron_triggers       = ["5 * * * *"]
 
-  depends_on = [null_resource.slack_bot_build[0], module.slack_kv[0]]
+  depends_on = [null_resource.slack_bot_build[0], module.slack_kv[0], null_resource.d1_migrations, cloudflare_r2_bucket_lifecycle.webhook_payloads]
+}
+
+resource "cloudflare_queue_consumer" "slack_events" {
+  count             = var.enable_slack_bot ? 1 : 0
+  account_id        = var.cloudflare_account_id
+  queue_id          = cloudflare_queue.slack_events[0].queue_id
+  type              = "worker"
+  script_name       = module.slack_bot_worker[0].worker_name
+  dead_letter_queue = cloudflare_queue.slack_events_dlq[0].queue_name
+  settings = {
+    batch_size       = 1
+    max_wait_time_ms = 1000
+    max_concurrency  = 5
+    max_retries      = 50
+    retry_delay      = 60
+  }
+  depends_on = [module.slack_bot_worker]
 }
 
 resource "cloudflare_queue_consumer" "slack_completion_delivery" {

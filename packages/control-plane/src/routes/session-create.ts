@@ -17,11 +17,16 @@ import {
 import { resolveEnvironmentTarget, resolveSessionRepositories } from "../repos/resolve";
 import { resolveScmProviderFromEnv } from "../source-control";
 import { EnvironmentStore } from "../db/environments";
+import { SessionIndexStore, type SessionEntry } from "../db/session-index";
 import { UserStore } from "../db/user-store";
 import { TeamMembershipStore } from "../db/team-memberships";
 import { createLogger } from "../logger";
 import { parseCreateSessionInput } from "../session/create-session-input";
-import { initializeSession, type SessionInitInput } from "../session/initialize";
+import {
+  initializeSession,
+  recoverIdempotentSessionInitialization,
+  type SessionInitInput,
+} from "../session/initialize";
 import { resolveGitHubEnrichmentForRequest } from "../session/identity";
 import { resolveSessionScopedSettings } from "../session/integration-settings-resolution";
 import { resolveManagedSkills, SkillResolutionError } from "../session/skill-resolution";
@@ -48,6 +53,42 @@ import {
 
 const logger = createLogger("router:session-create");
 const INVALID_SESSION_REQUEST_BODY_ERROR = "Invalid session request body";
+
+async function reusedSessionResponse(
+  session: SessionEntry,
+  key: string,
+  sessionStore: SessionIndexStore,
+  env: Env,
+  ctx: RequestContext
+): Promise<Response> {
+  try {
+    await recoverIdempotentSessionInitialization(env, session.id, ctx);
+    const current = await sessionStore.getByCreationIdempotencyKey(key);
+    if (!current || current.id !== session.id) {
+      throw new Error("Session idempotency reservation changed during recovery");
+    }
+    if (current.status === "failed") {
+      return json(
+        { error: "Original Linear session initialization failed", code: "session_failed" },
+        503
+      );
+    }
+    return json(
+      { sessionId: current.id, status: current.status } satisfies CreateSessionResponse,
+      200
+    );
+  } catch (cause) {
+    logger.error("Failed to recover Linear session initialization", {
+      session_id: session.id,
+      trace_id: ctx.trace_id,
+      error: cause instanceof Error ? cause.message : String(cause),
+    });
+    return json(
+      { error: "Linear session initialization unavailable", code: "session_failed" },
+      503
+    );
+  }
+}
 
 // Defense in depth on top of schema validation — matches git ref charsets.
 const BRANCH_NAME_PATTERN = /^[\w.\-/]+$/;
@@ -90,6 +131,16 @@ export async function handleCreateSession(
   const enforcement = applyIdentityEnforcement(ctx, "session-create", parsed.raw);
   if (enforcement.rejection) return enforcement.rejection;
   const enforced = enforcement.enforced;
+
+  // Only Linear may reserve a durable session-creation key; the key is signed
+  // with the request body by its service credential.
+  const creationIdempotencyKey = body.idempotencyKey;
+  if (
+    creationIdempotencyKey &&
+    (ctx.principal?.kind !== "service" || ctx.principal.service !== "linear-bot")
+  ) {
+    return json({ error: "Idempotency key requires the Linear service", code: "forbidden" }, 403);
+  }
 
   let repositoryContext: RepositoryPair | null;
   try {
@@ -204,6 +255,13 @@ export async function handleCreateSession(
   if (visibility === "private" && !resolvedUserId)
     return json({ error: "Session owner required", code: "owner_required" }, 400);
 
+  const sessionStore = new SessionIndexStore(ctx.db);
+  if (creationIdempotencyKey) {
+    const existing = await sessionStore.getByCreationIdempotencyKey(creationIdempotencyKey);
+    if (existing)
+      return reusedSessionResponse(existing, creationIdempotencyKey, sessionStore, env, ctx);
+  }
+
   const githubDeployment = resolveScmProviderFromEnv(env.SCM_PROVIDER) === "github";
   let scmLogin = body.scmLogin;
   let scmName = body.scmName;
@@ -300,6 +358,7 @@ export async function handleCreateSession(
 
   const input: SessionInitInput = {
     memory: resolvedPin(memorySelection),
+    creationIdempotencyKey,
     ownerTeamId: teamId,
     visibility,
     sessionId,
@@ -332,6 +391,13 @@ export async function handleCreateSession(
   try {
     await initializeSession(env, input, ctx);
   } catch (e) {
+    // A concurrent delivery may have won D1's unique key while this request
+    // was resolving its session. Reuse that committed row after the insert race.
+    if (creationIdempotencyKey) {
+      const existing = await sessionStore.getByCreationIdempotencyKey(creationIdempotencyKey);
+      if (existing && existing.id !== sessionId)
+        return reusedSessionResponse(existing, creationIdempotencyKey, sessionStore, env, ctx);
+    }
     if (e instanceof HarnessAdmissionError) return error(e.message, e.status);
     logger.error("Failed to initialize session", {
       error: e instanceof Error ? e.message : String(e),

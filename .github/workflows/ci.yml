@@ -1,9 +1,8 @@
 # The gate every change to main has to pass.
 #
 # It runs on every pull request and on every push to main, so the branch protection
-# rule can require it: a commit reaches main only with these checks green, and the
-# deployment workflows deploy that commit. The release workflow stays manual, because
-# it builds the images and takes an hour; this one is the quick gate.
+# rule can require it. Production Terraform deployment requires a separate manual
+# plan and apply; this workflow is the quick validation gate.
 #
 # The Python side of the repository is checked by the release workflow, which runs the
 # locked uv project, ruff and mypy. That is slow enough to belong to the release, not
@@ -51,6 +50,9 @@ jobs:
       - name: Build shared
         run: npm run build -w @open-inspect/shared
 
+      - name: Shared tests
+        run: npm test -w @open-inspect/shared
+
       - name: Lint
         run: npm run lint
 
@@ -59,6 +61,15 @@ jobs:
 
       - name: Control-plane tests
         run: npm test -w @open-inspect/control-plane
+
+      - name: GitHub bot tests
+        run: npm test -w @open-inspect/github-bot
+
+      - name: Slack bot tests
+        run: npm test -w @open-inspect/slack-bot
+
+      - name: Linear bot tests
+        run: npm test -w @open-inspect/linear-bot
 
       - name: Web tests
         run: npm test -w @open-inspect/web

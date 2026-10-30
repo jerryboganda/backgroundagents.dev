@@ -101,17 +101,11 @@ function getIssueSessionKey(issueId: string): string {
 }
 
 export async function lookupIssueSession(env: Env, issueId: string): Promise<IssueSession | null> {
-  try {
-    const data = await env.LINEAR_KV.get(getIssueSessionKey(issueId), "json");
-    const result = issueSessionSchema.safeParse(data);
-    if (result.success) return result.data;
-  } catch (e) {
-    log.debug("kv.lookup_issue_session_failed", {
-      issueId,
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
-  return null;
+  const data = await env.LINEAR_KV.get(getIssueSessionKey(issueId), "json");
+  if (data === null) return null;
+  const result = issueSessionSchema.safeParse(data);
+  if (!result.success) throw new Error(`Invalid issue session mapping for ${issueId}`);
+  return result.data;
 }
 
 export async function storeIssueSession(
@@ -129,7 +123,9 @@ export async function storeIssueSession(
  */
 export async function isDuplicateEvent(env: Env, eventKey: string): Promise<boolean> {
   const existing = await env.LINEAR_KV.get(`event:${eventKey}`);
-  if (existing) return true;
+  return existing !== null;
+}
+
+export async function markEventProcessed(env: Env, eventKey: string): Promise<void> {
   await env.LINEAR_KV.put(`event:${eventKey}`, "1", { expirationTtl: 3600 });
-  return false;
 }

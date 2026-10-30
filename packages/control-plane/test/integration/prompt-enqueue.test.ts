@@ -47,6 +47,35 @@ describe("POST /sessions/:id/prompt", () => {
     });
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  it("preserves the request id when a bot retries an accepted prompt", async () => {
+    const caller = { userId: "b".repeat(32), role: "member" } as const;
+    const sessionName = `public-prompt-retry-${crypto.randomUUID()}`;
+    const url = `https://cp.test/sessions/${sessionName}/prompt`;
+    const body = JSON.stringify({ content: "Continue", clientRequestId: "linear:delivery-1" });
+    const headers = await serviceRequestHeaders(url, { method: "POST", body, as: caller });
+    const { stub } = await initSession({ sessionName, userId: caller.userId });
+    const platform = createCloudflareEnv(env);
+    const send = () =>
+      handleControlPlaneHttp(
+        new Request(url, { method: "POST", headers, body }),
+        platform,
+        createExecutionContext()
+      );
+
+    const first = await send();
+    expect(first.status).toBe(200);
+    const { messageId } = await first.json<{ messageId: string }>();
+    const retry = await send();
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ messageId, deduplicated: true });
+    const rows = await queryDO<{ id: string; client_request_id: string }>(
+      stub,
+      "SELECT id, client_request_id FROM messages WHERE client_request_id = ?",
+      "linear:delivery-1"
+    );
+    expect(rows).toEqual([{ id: messageId, client_request_id: "linear:delivery-1" }]);
+  });
 });
 
 describe("POST /internal/prompt", () => {

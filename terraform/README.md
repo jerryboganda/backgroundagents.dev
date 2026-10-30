@@ -175,28 +175,24 @@ terraform plan
 terraform apply
 ```
 
-## CI/CD Pipeline
+## Production Release (Manual)
 
-The GitHub Actions workflow (`.github/workflows/terraform.yml`) automates:
+`.github/workflows/ci.yml` validates pull requests and pushes to `main`, but does not deploy
+Terraform. The repository has no `.github/workflows/terraform.yml`; a push does **not** run a
+production plan or apply. A credentialed operator must execute the [Quick Start](#quick-start) from
+`terraform/environments/production`, review the production `terraform plan`, run `terraform apply`,
+and verify the resulting services using the commands below. First deployments with Durable Object
+bindings require the two-phase apply described below.
 
-| Trigger       | Action                           |
-| ------------- | -------------------------------- |
-| Pull Request  | `terraform plan` with PR comment |
-| Merge to main | `terraform apply` (auto-approve) |
+### Deployment Credentials and Variables
 
-### GitHub Actions Secrets and Variables
+Supply production inputs to the machine running Terraform using `terraform.tfvars`, backend
+configuration, and/or `TF_VAR_*` environment variables. GitHub Actions secrets and variables do not
+automatically populate a manual Terraform run. The following is a configuration checklist; keep
+credentials out of version control. See the
+[CI/CD setup guide](../docs/GETTING_STARTED.md#set-up-cicd-optional) for separate workflows.
 
-Keep credentials in Actions **Secrets**. Non-secret configuration (account/application IDs, provider
-settings, feature flags, allowlists, and branding) can use Actions **Variables** instead. The
-workflows prefer a non-empty variable, then the same-named secret, then the existing default where
-one exists. Existing secret-only deployments continue to work; an empty variable falls back to the
-secret rather than clearing it. `CLASSIFICATION_MODEL` and `CLASSIFICATION_REASONING_EFFORT` remain
-variable-only.
-
-See [the CI/CD setup guide](../docs/GETTING_STARTED.md#set-up-cicd-optional) for the complete
-variable list and bulk upload examples using `gh variable set` and `gh secret set`.
-
-Add these secrets to your repository settings:
+Required values depend on the enabled services:
 
 ```
 # Deployment
@@ -339,8 +335,9 @@ Use the built-in two-phase flags instead of editing Terraform modules:
 Class removal does not disable surviving bindings. Remove the retired binding, set a new migration
 tag and previous tag, list the class in `control_plane_deleted_classes`, and apply with
 `enable_durable_object_bindings = true`. The migration and surviving bindings are emitted together.
-The production workflow stages the `SchedulerDO` v2-to-v3 deletion only when Terraform state still
-reports v2, so the release-specific migration is not a permanent default for fresh deployments.
+If upgrading a deployment that still has `SchedulerDO` v2, check the current state and explicitly
+configure the appropriate deletion migration before the manual apply. Fresh deployments do not need
+this retired-class migration.
 
 See
 [Cloudflare's documentation](https://developers.cloudflare.com/workers/platform/infrastructure-as-code/)

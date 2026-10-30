@@ -9,7 +9,14 @@ vi.mock("../src/github-auth", () => ({
   checkSenderPermission: vi.fn().mockResolvedValue({ hasPermission: true }),
 }));
 
-import app from "../src/index";
+import worker, { consumeGitHubWebhooks } from "../src/index";
+import {
+  claimDelivery,
+  finalizeDelivery,
+  pruneExpiredDeliveries,
+  releaseDelivery,
+  renewDelivery,
+} from "../src/delivery-claims";
 import { postReaction, postIssueComment, checkSenderPermission } from "../src/github-auth";
 
 /** Generate a valid GitHub webhook signature for a given secret and body. */
@@ -44,11 +51,93 @@ function createMockKV() {
   };
 }
 
+type DeliveryRow = { token: string; status: "processing" | "processed"; expiresAt: number };
+
+function createMockDeliveryDB() {
+  const rows = new Map<string, DeliveryRow>();
+  return {
+    rows,
+    prepare: vi.fn((sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        run: async () => {
+          if (sql.startsWith("INSERT INTO github_webhook_deliveries")) {
+            const [id, token, expiresAt, now] = args as [string, string, number, number];
+            const current = rows.get(id);
+            if (current && current.expiresAt > now) return { meta: { changes: 0 } };
+            rows.set(id, { token, status: "processing", expiresAt });
+            return { meta: { changes: 1 } };
+          }
+          if (sql.startsWith("UPDATE github_webhook_deliveries")) {
+            if (sql.includes("SET expires_at_ms")) {
+              const [expiresAt, id, token, now] = args as [number, string, string, number];
+              const current = rows.get(id);
+              if (
+                !current ||
+                current.token !== token ||
+                current.status !== "processing" ||
+                current.expiresAt <= now
+              )
+                return { meta: { changes: 0 } };
+              current.expiresAt = expiresAt;
+              return { meta: { changes: 1 } };
+            }
+            const [expiresAt, id, token, now] = args as [number, string, string, number];
+            const current = rows.get(id);
+            if (
+              !current ||
+              current.token !== token ||
+              current.status !== "processing" ||
+              current.expiresAt <= now
+            )
+              return { meta: { changes: 0 } };
+            rows.set(id, { token, status: "processed", expiresAt });
+            return { meta: { changes: 1 } };
+          }
+          if (sql.startsWith("SELECT status FROM github_webhook_deliveries")) {
+            throw new Error("Use first() for SELECT");
+          }
+          if (sql.startsWith("DELETE FROM github_webhook_deliveries")) {
+            if (sql.includes("WHERE delivery_id IN")) {
+              const now = args[0] as number;
+              const expired = [...rows.entries()]
+                .filter(([, row]) => row.expiresAt <= now)
+                .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+                .slice(0, 100);
+              for (const [id] of expired) rows.delete(id);
+              return { meta: { changes: expired.length } };
+            }
+            const [id, token] = args as [string, string];
+            const current = rows.get(id);
+            if (!current || current.token !== token) return { meta: { changes: 0 } };
+            rows.delete(id);
+            return { meta: { changes: 1 } };
+          }
+          throw new Error(`Unexpected D1 statement: ${sql}`);
+        },
+        first: async () => {
+          const row = rows.get(args[0] as string);
+          return row ? { status: row.status } : null;
+        },
+      }),
+    })),
+  };
+}
+
+function deliveryStatus(env: Env, id: string): string | null {
+  return (
+    (env.DB as unknown as ReturnType<typeof createMockDeliveryDB>).rows.get(id)?.status ?? null
+  );
+}
+
 function makeEnv() {
   const githubKv = createMockKV();
   return {
     GITHUB_KV: githubKv,
+    DB: createMockDeliveryDB(),
     AUTOFIX_QUEUE: {
+      send: vi.fn(async () => undefined),
+    },
+    WEBHOOK_QUEUE: {
       send: vi.fn(async () => undefined),
     },
     CONTROL_PLANE: {
@@ -63,6 +152,34 @@ function makeEnv() {
   } as unknown as Env;
 }
 
+// Run the durable consumer explicitly after the provider's HTTP response.
+// Legacy delivery checks still observe the resulting retry and completion paths.
+const app = {
+  fetch: async (request: Request, env: Env, ctx: ReturnType<typeof makeCtx>) => {
+    const response = await worker.fetch(request, env, ctx);
+    if (response.ok && request.method === "POST" && request.url.endsWith("/webhooks/github")) {
+      const sent = vi.mocked(env.WEBHOOK_QUEUE.send).mock.lastCall?.[0];
+      if (sent) {
+        ctx.waitUntil(
+          consumeGitHubWebhooks(
+            {
+              messages: [
+                {
+                  body: sent,
+                  ack: vi.fn(),
+                  retry: vi.fn(),
+                },
+              ],
+            } as unknown as Parameters<typeof consumeGitHubWebhooks>[0],
+            env
+          )
+        );
+      }
+    }
+    return response;
+  },
+};
+
 function makeCtx() {
   return {
     props: {},
@@ -76,6 +193,35 @@ async function flushWaitUntil(ctx: ReturnType<typeof makeCtx>, callIndex = 0): P
 }
 
 describe("POST /webhooks/github", () => {
+  it("returns 503 without processing when durable intake fails", async () => {
+    const body = JSON.stringify({ action: "opened" });
+    const env = makeEnv();
+    const ctx = makeCtx();
+    vi.mocked(env.WEBHOOK_QUEUE.send).mockRejectedValueOnce(new Error("intake offline"));
+    const request = () =>
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": "",
+          "X-GitHub-Event": "push",
+          "X-GitHub-Delivery": "intake-retry",
+        },
+      });
+    const signedRequest = async () => {
+      const req = request();
+      req.headers.set("X-Hub-Signature-256", await sign(SECRET, body));
+      return req;
+    };
+    expect((await app.fetch(await signedRequest(), env, ctx)).status).toBe(503);
+    expect(ctx.waitUntil).not.toHaveBeenCalled();
+    expect(env.CONTROL_PLANE.fetch).not.toHaveBeenCalled();
+    expect(deliveryStatus(env, "intake-retry")).toBeNull();
+    expect((await app.fetch(await signedRequest(), env, ctx)).status).toBe(200);
+    await flushWaitUntil(ctx);
+    expect(deliveryStatus(env, "intake-retry")).toBe("processed");
+  });
+
   it("queues an eligible pull request comment before acknowledging the webhook", async () => {
     const body = JSON.stringify({
       action: "created",
@@ -123,6 +269,7 @@ describe("POST /webhooks/github", () => {
     );
 
     expect(res.status).toBe(200);
+    await flushWaitUntil(ctx);
     expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledOnce();
     expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledWith({
       version: 1,
@@ -225,6 +372,7 @@ describe("POST /webhooks/github", () => {
     );
 
     expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledOnce());
     expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledOnce();
     expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledWith({
       version: 1,
@@ -288,7 +436,7 @@ describe("POST /webhooks/github", () => {
     expect(env.AUTOFIX_QUEUE.send).not.toHaveBeenCalled();
   });
 
-  it("continues normal webhook handling when Autofix queueing fails", async () => {
+  it("acknowledges durable intake, then retries failed Autofix delivery", async () => {
     const body = JSON.stringify({
       action: "created",
       issue: {
@@ -321,7 +469,7 @@ describe("POST /webhooks/github", () => {
     const ctx = makeCtx();
     vi.mocked(env.AUTOFIX_QUEUE.send).mockRejectedValueOnce(new Error("queue unavailable"));
 
-    const res = await app.fetch(
+    const request = () =>
       new Request("http://localhost/webhooks/github", {
         method: "POST",
         body,
@@ -330,19 +478,23 @@ describe("POST /webhooks/github", () => {
           "X-GitHub-Event": "issue_comment",
           "X-GitHub-Delivery": "delivery-comment-1236",
         },
-      }),
-      env,
-      ctx
-    );
+      });
+    const res = await app.fetch(request(), env, ctx);
 
     expect(res.status).toBe(200);
-    expect(ctx.waitUntil).toHaveBeenCalledOnce();
     await flushWaitUntil(ctx);
+    expect(ctx.waitUntil).toHaveBeenCalledOnce();
+    expect(deliveryStatus(env, "delivery-comment-1236")).toBeNull();
+    expect(env.CONTROL_PLANE.fetch).not.toHaveBeenCalled();
+
+    expect((await app.fetch(request(), env, ctx)).status).toBe(200);
+    await flushWaitUntil(ctx, 1);
+    expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledTimes(2);
+    expect(deliveryStatus(env, "delivery-comment-1236")).toBe("processed");
     expect(env.CONTROL_PLANE.fetch).toHaveBeenCalledWith(
       "https://internal/internal/github-event",
       expect.any(Object)
     );
-    expect(env.GITHUB_KV.delete).not.toHaveBeenCalled();
   });
 
   it("keys forwarded ready_for_review events by delivery id", async () => {
@@ -549,15 +701,103 @@ describe("POST /webhooks/github", () => {
 
     const secondRes = await app.fetch(request(), env, ctx);
     expect(secondRes.status).toBe(200);
-    expect(await secondRes.json()).toEqual({ ok: true, duplicate: true });
+    expect(await secondRes.json()).toEqual({ ok: true });
 
-    expect(ctx.waitUntil).toHaveBeenCalledOnce();
-    const githubKv = env.GITHUB_KV as unknown as {
-      get: ReturnType<typeof vi.fn>;
-      put: ReturnType<typeof vi.fn>;
-    };
-    expect(githubKv.get).toHaveBeenCalledTimes(3);
-    expect(githubKv.put).toHaveBeenCalledTimes(2);
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
+    expect(deliveryStatus(env, "delivery-123")).toBe("processed");
+    expect(env.CONTROL_PLANE.fetch).not.toHaveBeenCalled();
+  });
+
+  it("atomically admits only one of two concurrent deliveries", async () => {
+    const body = JSON.stringify({
+      action: "created",
+      issue: {
+        number: 42,
+        title: "Fix concurrency",
+        pull_request: { url: "https://api.github.com/repos/test/repo/pulls/42" },
+      },
+      comment: { id: 7788, body: "Fix this", user: { login: "alice" } },
+      repository: { id: 99, name: "repo", private: false, owner: { login: "test" } },
+      sender: { id: 7, login: "alice", type: "User", avatar_url: "https://example.com/alice.png" },
+    });
+    const signature = await sign(SECRET, body);
+    const request = () =>
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": signature,
+          "X-GitHub-Event": "issue_comment",
+          "X-GitHub-Delivery": "concurrent-7788",
+        },
+      });
+    const env = makeEnv();
+    const ctx = makeCtx();
+    let unblockQueue!: () => void;
+    const queueBlocked = new Promise<void>((resolve) => {
+      unblockQueue = resolve;
+    });
+    vi.mocked(env.AUTOFIX_QUEUE.send).mockImplementation(async () => queueBlocked);
+
+    const firstResponse = app.fetch(request(), env, ctx);
+    await vi.waitFor(() => expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledOnce());
+    const secondResponse = app.fetch(request(), env, ctx);
+    const second = await secondResponse;
+    expect(await second.json()).toEqual({ ok: true });
+    expect(deliveryStatus(env, "concurrent-7788")).toBe("processing");
+    unblockQueue();
+    expect((await firstResponse).status).toBe(200);
+    await flushWaitUntil(ctx);
+    expect(deliveryStatus(env, "concurrent-7788")).toBe("processed");
+    expect(env.AUTOFIX_QUEUE.send).toHaveBeenCalledOnce();
+    await flushWaitUntil(ctx, 1);
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
+  });
+
+  it("fences stale claim completion after a processing lease expires", async () => {
+    const env = makeEnv();
+    const db = env.DB as unknown as ReturnType<typeof createMockDeliveryDB>;
+    expect(await claimDelivery(env, "recoverable", "old")).toBe(true);
+    db.rows.get("recoverable")!.expiresAt = Date.now() - 1;
+    expect(await claimDelivery(env, "recoverable", "new")).toBe(true);
+    await releaseDelivery(env, "recoverable", "old");
+    await expect(finalizeDelivery(env, "recoverable", "old")).rejects.toThrow("ownership lost");
+    expect(deliveryStatus(env, "recoverable")).toBe("processing");
+    await finalizeDelivery(env, "recoverable", "new");
+    expect(deliveryStatus(env, "recoverable")).toBe("processed");
+  });
+
+  it("prunes expired claims while preserving active deliveries", async () => {
+    const env = makeEnv();
+    const db = env.DB as unknown as ReturnType<typeof createMockDeliveryDB>;
+    await claimDelivery(env, "stale", "one");
+    db.rows.get("stale")!.expiresAt = Date.now() - 1;
+    await claimDelivery(env, "active", "two");
+
+    await pruneExpiredDeliveries(env);
+    expect(deliveryStatus(env, "stale")).toBeNull();
+    expect(deliveryStatus(env, "active")).toBe("processing");
+  });
+
+  it("rejects malformed JSON without claiming the delivery", async () => {
+    const body = "{";
+    const env = makeEnv();
+    const response = await app.fetch(
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": await sign(SECRET, body),
+          "X-GitHub-Event": "issue_comment",
+          "X-GitHub-Delivery": "invalid-json",
+        },
+      }),
+      env,
+      makeCtx()
+    );
+    expect(response.status).toBe(400);
+    expect(deliveryStatus(env, "invalid-json")).toBeNull();
+    expect(env.DB.prepare).not.toHaveBeenCalled();
   });
 
   it.each([undefined, "99", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
@@ -600,8 +840,7 @@ describe("POST /webhooks/github", () => {
       expect(cpFetch.mock.calls.some(([url]) => String(url) === "https://internal/sessions")).toBe(
         false
       );
-      expect(await env.GITHUB_KV.get("delivery:delivery-invalid-repository-id")).toBeNull();
-      expect(env.GITHUB_KV.delete).toHaveBeenCalledOnce();
+      expect(deliveryStatus(env, "delivery-invalid-repository-id")).toBeNull();
     }
   );
 
@@ -662,9 +901,8 @@ describe("POST /webhooks/github", () => {
       expect(await firstRes.json()).toEqual({ ok: true });
       await flushWaitUntil(ctx, 0);
 
-      expect(await env.GITHUB_KV.get("delivery:delivery-refusal-comment")).toBeNull();
+      expect(deliveryStatus(env, "delivery-refusal-comment")).toBeNull();
       expect(await env.GITHUB_KV.get("delivery-dispatch:delivery-refusal-comment")).toBeNull();
-      expect(env.GITHUB_KV.delete).toHaveBeenCalledTimes(1);
       expect(
         cpFetch.mock.calls.filter(([url]) => String(url) === "https://internal/sessions")
       ).toHaveLength(1);
@@ -679,14 +917,15 @@ describe("POST /webhooks/github", () => {
         cpFetch.mock.calls.filter(([url]) => String(url) === "https://internal/sessions")
       ).toHaveLength(2);
       expect(cpFetch.mock.calls.some(([url]) => String(url).endsWith("/prompt"))).toBe(false);
-      expect(await env.GITHUB_KV.get("delivery:delivery-refusal-comment")).toBe("processed");
+      expect(deliveryStatus(env, "delivery-refusal-comment")).toBe("processed");
       expect(await env.GITHUB_KV.get("delivery-dispatch:delivery-refusal-comment")).toBe(
         "processed"
       );
 
       const duplicateRes = await app.fetch(request(), env, ctx);
-      expect(await duplicateRes.json()).toEqual({ ok: true, duplicate: true });
-      expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
+      expect(await duplicateRes.json()).toEqual({ ok: true });
+      await flushWaitUntil(ctx, 2);
+      expect(ctx.waitUntil).toHaveBeenCalledTimes(3);
     }
   );
 
@@ -775,9 +1014,8 @@ describe("POST /webhooks/github", () => {
 
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({ ok: true });
       await flushWaitUntil(ctx, 0);
-      expect(await env.GITHUB_KV.get("delivery:delivery-routing-retry")).toBeNull();
+      expect(deliveryStatus(env, "delivery-routing-retry")).toBeNull();
       expect(await env.GITHUB_KV.get("delivery-dispatch:delivery-routing-retry")).toBeNull();
-      expect(env.GITHUB_KV.delete).toHaveBeenCalledOnce();
       expect(
         cpFetch.mock.calls.filter(([url]) => String(url).endsWith("/github-event"))
       ).toHaveLength(1);
@@ -787,7 +1025,7 @@ describe("POST /webhooks/github", () => {
 
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({ ok: true });
       await flushWaitUntil(ctx, 1);
-      expect(await env.GITHUB_KV.get("delivery:delivery-routing-retry")).toBe("processed");
+      expect(deliveryStatus(env, "delivery-routing-retry")).toBe("processed");
       expect(
         cpFetch.mock.calls.filter(([url]) => String(url) === "https://internal/sessions")
       ).toHaveLength(1);
@@ -797,9 +1035,9 @@ describe("POST /webhooks/github", () => {
       ).toHaveLength(2);
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({
         ok: true,
-        duplicate: true,
       });
-      expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
+      await flushWaitUntil(ctx, 2);
+      expect(ctx.waitUntil).toHaveBeenCalledTimes(3);
     }
   );
 
@@ -911,7 +1149,7 @@ describe("POST /webhooks/github", () => {
 
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({ ok: true });
       await flushWaitUntil(ctx, 0);
-      expect(await env.GITHUB_KV.get("delivery:delivery-refusal-retry")).toBeNull();
+      expect(deliveryStatus(env, "delivery-refusal-retry")).toBeNull();
       expect(await env.GITHUB_KV.get("delivery-dispatch:delivery-refusal-retry")).toBeNull();
       expect(postIssueComment).toHaveBeenCalledTimes(commentsBefore + 1);
       expect(
@@ -926,11 +1164,11 @@ describe("POST /webhooks/github", () => {
       );
       expect(cpFetch.mock.calls.some(([url]) => String(url).includes("/sessions"))).toBe(false);
       expect(await env.GITHUB_KV.get("delivery-dispatch:delivery-refusal-retry")).toBe("processed");
-      expect(await env.GITHUB_KV.get("delivery:delivery-refusal-retry")).toBe("processed");
+      expect(deliveryStatus(env, "delivery-refusal-retry")).toBe("processed");
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({
         ok: true,
-        duplicate: true,
       });
+      await flushWaitUntil(ctx, 2);
       expect(postIssueComment).toHaveBeenCalledTimes(commentsBefore + 2);
     }
   );
@@ -1039,7 +1277,7 @@ describe("POST /webhooks/github", () => {
 
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({ ok: true });
       await flushWaitUntil(ctx, 0);
-      expect(await env.GITHUB_KV.get("delivery:delivery-forward-retry")).toBeNull();
+      expect(deliveryStatus(env, "delivery-forward-retry")).toBeNull();
       expect(await env.GITHUB_KV.get("delivery-dispatch:delivery-forward-retry")).toBe(
         checkpointed ? "processed" : null
       );
@@ -1047,7 +1285,7 @@ describe("POST /webhooks/github", () => {
         expect(env.GITHUB_KV.put).toHaveBeenCalledWith(
           "delivery-dispatch:delivery-forward-retry",
           "processed",
-          { expirationTtl: 604800 }
+          { expirationTtl: 2678400 }
         );
       } else {
         expect(env.GITHUB_KV.put).not.toHaveBeenCalledWith(
@@ -1062,7 +1300,6 @@ describe("POST /webhooks/github", () => {
       expect(cpFetch.mock.calls.filter(([url]) => String(url).endsWith("/prompt"))).toHaveLength(
         builtin === "success" ? 1 : 0
       );
-      expect(env.GITHUB_KV.delete).toHaveBeenCalledWith("delivery:delivery-forward-retry");
 
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({ ok: true });
       await flushWaitUntil(ctx, 1);
@@ -1087,17 +1324,12 @@ describe("POST /webhooks/github", () => {
       expect(
         cpFetch.mock.calls.filter(([url]) => String(url).endsWith("/github-event"))
       ).toHaveLength(2);
-      expect(await env.GITHUB_KV.get("delivery:delivery-forward-retry")).toBe("processed");
-      expect(env.GITHUB_KV.put).toHaveBeenCalledWith(
-        "delivery:delivery-forward-retry",
-        "processed",
-        { expirationTtl: 604800 }
-      );
+      expect(deliveryStatus(env, "delivery-forward-retry")).toBe("processed");
       expect(await (await app.fetch(request(), env, ctx)).json()).toEqual({
         ok: true,
-        duplicate: true,
       });
-      expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
+      await flushWaitUntil(ctx, 2);
+      expect(ctx.waitUntil).toHaveBeenCalledTimes(3);
       expect(
         cpFetch.mock.calls.filter(([url]) => String(url).endsWith("/github-event"))
       ).toHaveLength(2);
@@ -1157,12 +1389,7 @@ describe("POST /webhooks/github", () => {
         pullRequest: { number: 42 },
       });
     }
-    const githubKv = env.GITHUB_KV as unknown as {
-      get: ReturnType<typeof vi.fn>;
-      put: ReturnType<typeof vi.fn>;
-      delete: ReturnType<typeof vi.fn>;
-    };
-    expect(githubKv.delete).toHaveBeenCalledTimes(2);
+    expect(deliveryStatus(env, "delivery-failure")).toBeNull();
   });
 
   it("returns 200 for unhandled event type", async () => {
@@ -1323,5 +1550,23 @@ describe("GET /health", () => {
       status: "healthy",
       service: "open-inspect-github-bot",
     });
+  });
+});
+
+describe("GitHub delivery heartbeat fencing", () => {
+  it("extends only the current live owner's lease and rejects stale owners", async () => {
+    const env = makeEnv();
+    expect(await claimDelivery(env, "heartbeat-1", "owner-1")).toBe(true);
+    const rows = (env.DB as unknown as ReturnType<typeof createMockDeliveryDB>).rows;
+    const before = rows.get("heartbeat-1")!.expiresAt;
+    expect(await renewDelivery(env, "heartbeat-1", "stale-owner")).toBe(false);
+    expect(rows.get("heartbeat-1")!.expiresAt).toBe(before);
+    expect(await renewDelivery(env, "heartbeat-1", "owner-1")).toBe(true);
+    expect(rows.get("heartbeat-1")!.expiresAt).toBeGreaterThanOrEqual(before);
+    await finalizeDelivery(env, "heartbeat-1", "owner-1");
+    expect(await renewDelivery(env, "heartbeat-1", "owner-1")).toBe(false);
+    await expect(finalizeDelivery(env, "heartbeat-1", "stale-owner")).rejects.toThrow(
+      "ownership lost"
+    );
   });
 });

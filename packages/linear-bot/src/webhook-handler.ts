@@ -7,7 +7,7 @@ import type { LinearCallbackContext } from "@open-inspect/shared/types/session-a
 import { MAX_WEB_PROMPT_CHARS } from "@open-inspect/shared/types/prompts";
 import { checkHarnessCompatibility, getHarnessLabel } from "@open-inspect/shared/harnesses";
 import { z } from "zod";
-import type { Env, AgentSessionWebhook, AgentSessionWebhookIssue } from "./types";
+import type { Env, AgentSessionWebhook, AgentSessionWebhookIssue, IssueSession } from "./types";
 import {
   getLinearClientOrThrow,
   LinearAuthError,
@@ -365,6 +365,7 @@ async function handleFollowUp(
       sessionContextSummary,
     }),
     source: "linear",
+    clientRequestId: `linear:${traceId}`,
     callbackContext,
   });
   const promptRes = await signedControlPlaneFetch(env, {
@@ -385,6 +386,7 @@ async function handleFollowUp(
       type: "error",
       body: "Failed to send follow-up to the existing session.",
     });
+    throw new Error(`Linear follow-up prompt failed: HTTP ${promptRes.status}`);
   }
 
   log.info("agent_session.followup", {
@@ -394,6 +396,70 @@ async function handleFollowUp(
     agent_session_id: agentSessionId,
     duration_ms: Date.now() - startTime,
   });
+}
+
+async function linkCreatedSession(
+  client: LinearApiClient,
+  agentSessionId: string,
+  sessionId: string,
+  env: Env
+): Promise<void> {
+  await updateAgentSession(client, agentSessionId, {
+    externalUrls: [{ label: "View Session", url: `${env.WEB_APP_URL}/session/${sessionId}` }],
+    plan: makePlan("session_created"),
+  });
+}
+
+async function deliverInitialPrompt(
+  env: Env,
+  issue: AgentSessionWebhookIssue,
+  session: IssueSession,
+  traceId: string,
+  client?: LinearApiClient
+): Promise<void> {
+  const pending = session.pendingInitialPrompt;
+  if (!pending) return;
+
+  let response: Response;
+  try {
+    response = await signedControlPlaneFetch(env, {
+      method: "POST",
+      url: `https://internal/sessions/${session.sessionId}/prompt`,
+      body: pending.body,
+      actor: `linear:${pending.actorUserId}`,
+      traceId,
+    });
+  } catch (error) {
+    log.error("control_plane.send_prompt", {
+      trace_id: traceId,
+      session_id: session.sessionId,
+      issue_identifier: issue.identifier,
+      prompt_length: pending.promptLength,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+    throw error;
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    log.error("control_plane.send_prompt", {
+      trace_id: traceId,
+      session_id: session.sessionId,
+      issue_identifier: issue.identifier,
+      prompt_length: pending.promptLength,
+      http_status: response.status,
+      response_body: body.slice(0, 500),
+    });
+    if (client) {
+      await emitAgentActivity(client, session.agentSessionId ?? "", {
+        type: "error",
+        body: `Failed to send the prompt to the coding session.\n\n\`HTTP ${response.status}: ${body.slice(0, 200)}\``,
+      });
+    }
+    throw new Error(`Linear initial prompt failed: HTTP ${response.status}`);
+  }
+
+  await storeIssueSession(env, issue.id, { ...session, pendingInitialPrompt: undefined });
 }
 
 async function handleNewSession(
@@ -595,6 +661,7 @@ async function handleNewSession(
       actorDisplayName,
       actorEmail,
       teamId,
+      idempotencyKey: `linear:${webhook.organizationId}:${issue.id}:${agentSessionId}`,
     },
     traceId
   );
@@ -625,7 +692,7 @@ async function handleNewSession(
     transitionIssueOnStart: shouldTransitionIssueOnStart(webhook),
   });
 
-  await storeIssueSession(env, issue.id, {
+  const issueSession: IssueSession = {
     sessionId: session.sessionId,
     issueId: issue.id,
     issueIdentifier: issue.identifier,
@@ -634,54 +701,21 @@ async function handleNewSession(
     model,
     agentSessionId,
     createdAt: Date.now(),
-  });
-
-  // Set externalUrls and update plan
-  await updateAgentSession(client, agentSessionId, {
-    externalUrls: [
-      { label: "View Session", url: `${env.WEB_APP_URL}/session/${session.sessionId}` },
-    ],
-    plan: makePlan("session_created"),
-  });
-
-  // ─── Send prompt ──────────────────────────────────────────────────────
-
-  const promptUrl = `https://internal/sessions/${session.sessionId}/prompt`;
-  const promptBody = JSON.stringify({
-    content: prompt,
-    source: "linear",
-    callbackContext,
-  });
-  const promptRes = await signedControlPlaneFetch(env, {
-    method: "POST",
-    url: promptUrl,
-    body: promptBody,
-    actor: `linear:${launchActorUserId}`,
-    traceId,
-  });
-
-  if (!promptRes.ok) {
-    let promptErrBody = "";
-    try {
-      promptErrBody = await promptRes.text();
-    } catch {
-      /* ignore */
-    }
-    await emitAgentActivity(client, agentSessionId, {
-      type: "error",
-      body: `Failed to send the prompt to the coding session.\n\n\`HTTP ${promptRes.status}: ${promptErrBody.slice(0, 200)}\``,
-    });
-    log.error("control_plane.send_prompt", {
-      trace_id: traceId,
-      session_id: session.sessionId,
-      issue_identifier: issue.identifier,
-      prompt_length: prompt.length,
-      http_status: promptRes.status,
-      response_body: promptErrBody.slice(0, 500),
-      duration_ms: Date.now() - startTime,
-    });
-    return;
-  }
+    initialDeliveryId: traceId,
+    pendingInitialPrompt: {
+      body: JSON.stringify({
+        content: prompt,
+        source: "linear",
+        callbackContext,
+        clientRequestId: `linear:${traceId}`,
+      }),
+      actorUserId: launchActorUserId,
+      promptLength: prompt.length,
+    },
+  };
+  await storeIssueSession(env, issue.id, issueSession);
+  await linkCreatedSession(client, agentSessionId, session.sessionId, env);
+  await deliverInitialPrompt(env, issue, issueSession, traceId, client);
 
   await emitAgentActivity(client, agentSessionId, {
     type: "thought",
@@ -738,8 +772,24 @@ export async function handleAgentSessionEvent(
 
   // Follow-up handling (action: "prompted" with existing session)
   const existingSession = await lookupIssueSession(env, issue.id);
-  if (existingSession && webhook.action === "prompted") {
-    return handleFollowUp(webhook, issue, env, traceId);
+  if (existingSession) {
+    if (existingSession.pendingInitialPrompt) {
+      const client = await getAgentSessionLinearClient({
+        env,
+        traceId,
+        orgId: webhook.organizationId,
+        agentSessionId,
+        issue,
+        mode: "start",
+        expectedAppUserId: webhook.appUserId,
+      });
+      if (client) await linkCreatedSession(client, agentSessionId, existingSession.sessionId, env);
+      await deliverInitialPrompt(env, issue, existingSession, traceId, client ?? undefined);
+    }
+    if (webhook.action === "prompted" && traceId !== existingSession.initialDeliveryId) {
+      return handleFollowUp(webhook, issue, env, traceId);
+    }
+    return;
   }
 
   // New session

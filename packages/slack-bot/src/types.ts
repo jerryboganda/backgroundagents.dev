@@ -5,6 +5,8 @@
 import type { ConfidenceLevel } from "@open-inspect/shared/types/repository-catalog";
 import type { ControlPlaneFetcher } from "@open-inspect/shared/service-auth";
 import type { SlackCompletionJob } from "./completion/job";
+import type { SlackEventPayload } from "./events/payload";
+import type { WebhookPayload } from "@open-inspect/shared/webhook-queue";
 // targets.ts is a pure leaf (types + policy functions, no I/O), so the types
 // barrel can depend on it without a cycle.
 import type { SlackSessionTarget } from "./targets";
@@ -17,6 +19,9 @@ interface SlackCompletionQueue {
  * Cloudflare Worker environment bindings.
  */
 export interface Env {
+  WEBHOOK_DB: D1Database;
+  WEBHOOK_PAYLOADS?: R2Bucket;
+  SLACK_EVENTS_QUEUE: Queue<{ id: string } & WebhookPayload<SlackEventPayload>>;
   // KV namespace
   SLACK_KV: KVNamespace;
 

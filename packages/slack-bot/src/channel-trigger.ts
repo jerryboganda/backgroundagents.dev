@@ -24,6 +24,7 @@ import { z } from "zod";
 const log = createLogger("channel-trigger");
 
 const slackTriggerForwardResponseSchema = z.object({
+  ok: z.literal(true),
   triggered: z.number().optional(),
   skipped: z.number().optional(),
   steered: z.number().optional(),
@@ -132,7 +133,7 @@ async function forwardSlackEvent(
         channel_id: event.channelId,
         duration_ms: Date.now() - startTime,
       });
-      return;
+      throw new Error(`Slack automation forward failed: HTTP ${response.status}`);
     }
 
     const parsed = slackTriggerForwardResponseSchema.safeParse(await response.json());
@@ -144,7 +145,7 @@ async function forwardSlackEvent(
         channel_id: event.channelId,
         duration_ms: Date.now() - startTime,
       });
-      return;
+      throw new Error("Slack automation forward returned an invalid response");
     }
 
     const result = parsed.data;
@@ -164,13 +165,22 @@ async function forwardSlackEvent(
     // /callbacks/automation-complete for a new run, or /callbacks/complete for a
     // steered follow-up turn.
     if ((result.triggered ?? 0) >= 1 || (result.steered ?? 0) >= 1) {
-      const reaction = await addReaction(env.SLACK_BOT_TOKEN, event.channelId, event.ts, "eyes");
-      if (!reaction.ok && reaction.error !== "already_reacted") {
+      try {
+        const reaction = await addReaction(env.SLACK_BOT_TOKEN, event.channelId, event.ts, "eyes");
+        if (!reaction.ok && reaction.error !== "already_reacted") {
+          log.warn("slack_trigger.react", {
+            trace_id: traceId,
+            channel_id: event.channelId,
+            message_ts: event.ts,
+            slack_error: reaction.error,
+          });
+        }
+      } catch (error) {
         log.warn("slack_trigger.react", {
           trace_id: traceId,
           channel_id: event.channelId,
           message_ts: event.ts,
-          slack_error: reaction.error,
+          error: error instanceof Error ? error : new Error(String(error)),
         });
       }
     }
@@ -182,5 +192,6 @@ async function forwardSlackEvent(
       error: e instanceof Error ? e : new Error(String(e)),
       duration_ms: Date.now() - startTime,
     });
+    throw e;
   }
 }

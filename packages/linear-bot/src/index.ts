@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import { enqueueWebhookPayload } from "@open-inspect/shared/webhook-queue";
 import type { Env, AgentSessionWebhook } from "./types";
 import {
   buildOAuthAuthorizeUrl,
@@ -15,9 +16,8 @@ import {
 import { callbacksRouter } from "./callbacks";
 import { createLogger } from "./logger";
 import { resolveAppName } from "@open-inspect/shared/app-name";
-import { handleAgentSessionEvent } from "./webhook-handler";
 import { escapeHtml } from "./prompts";
-import { isDuplicateEvent } from "./kv-store";
+import { consumeLinearEvents, pruneProcessedLinearDeliveries } from "./webhook-consumer";
 
 const log = createLogger("handler");
 
@@ -151,13 +151,17 @@ app.post("/webhook", async (c) => {
       return c.json({ error: "Missing Linear-Delivery header" }, 400);
     }
 
-    const isDuplicate = await isDuplicateEvent(c.env, deliveryId);
-    if (isDuplicate) {
-      log.info("webhook.deduplicated", { trace_id: traceId, event_key: deliveryId });
-      return c.json({ ok: true, skipped: true, reason: "duplicate" });
+    try {
+      await enqueueWebhookPayload(
+        c.env.LINEAR_EVENTS_QUEUE,
+        c.env.WEBHOOK_PAYLOADS,
+        { id: deliveryId },
+        payload
+      );
+    } catch (error) {
+      log.error("webhook.enqueue_failed", { trace_id: traceId, event_key: deliveryId, error });
+      return c.json({ error: "Webhook queue unavailable" }, 503);
     }
-
-    c.executionCtx.waitUntil(handleAgentSessionEvent(payload, c.env, traceId));
 
     log.info("http.request", {
       trace_id: traceId,
@@ -177,4 +181,8 @@ app.post("/webhook", async (c) => {
 // Mount callbacks router
 app.route("/callbacks", callbacksRouter);
 
-export default app;
+export default {
+  fetch: app.fetch,
+  queue: consumeLinearEvents,
+  scheduled: (_event: ScheduledEvent, env: Env) => pruneProcessedLinearDeliveries(env),
+};

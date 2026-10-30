@@ -53,8 +53,26 @@ it("upgrades a full populated pre-Codex database without rebuilding FK parent ta
     expect(applyMigrations(db, directory)).toContain("0087_codex_harness.sql");
     expect(
       CODEX_MIGRATION_TABLES.map((table) => db.prepare(`SELECT * FROM ${table}`).all())
-    ).toEqual(before);
-    expect(db.prepare(CODEX_MIGRATION_SCHEMA_OBJECTS).all()).toEqual(schema);
+    ).toEqual(
+      before.map((rows, index) =>
+        CODEX_MIGRATION_TABLES[index] === "sessions"
+          ? rows.map((row) => ({
+              ...row,
+              creation_idempotency_key: null,
+              creation_init_payload: null,
+            }))
+          : rows
+      )
+    );
+    // Later additive migrations can create new schema objects; the pre-Codex
+    // objects must remain intact across the 0087 migration.
+    const originalNames = new Set(schema.map((row) => String(row.name)));
+    expect(
+      db
+        .prepare(CODEX_MIGRATION_SCHEMA_OBJECTS)
+        .all()
+        .filter((row) => originalNames.has(String(row.name)))
+    ).toEqual(schema);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     db.exec(
       "UPDATE sessions SET harness='codex' WHERE id='child'; UPDATE automations SET harness='codex'"

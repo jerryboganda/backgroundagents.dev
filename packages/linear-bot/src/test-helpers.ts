@@ -34,6 +34,8 @@ export function createFakeKV(initial: Record<string, string> = {}) {
 
 export function makeLinearBotEnv(kv: KVNamespace, overrides: Partial<Env> = {}): Env {
   return {
+    WEBHOOK_DB: {} as D1Database,
+    LINEAR_EVENTS_QUEUE: { send: vi.fn(async () => {}) } as unknown as Env["LINEAR_EVENTS_QUEUE"],
     LINEAR_KV: kv,
     LINEAR_WEBHOOK_SECRET: LINEAR_WEBHOOK_TEST_SECRET,
     DEFAULT_MODEL: "anthropic/claude-haiku-4-5",

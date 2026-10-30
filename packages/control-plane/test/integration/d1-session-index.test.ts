@@ -40,6 +40,34 @@ describe("D1 SessionIndexStore", () => {
     expect(session!.status).toBe("created");
   });
 
+  it("atomically rejects a competing session with the same creation key", async () => {
+    const store = new SessionIndexStore(env.DB);
+    const original = {
+      id: "linear-original",
+      creationIdempotencyKey: "linear:org-1:issue-1:agent-1",
+      ownerTeamId: null,
+      visibility: "workspace" as const,
+      title: "Linear delegation",
+      repoOwner: null,
+      repoName: null,
+      model: "anthropic/claude-haiku-4-5",
+      reasoningEffort: null,
+      baseBranch: null,
+      status: "created" as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    await store.create(original);
+    await expect(store.create({ ...original, id: "linear-duplicate" })).rejects.toThrow();
+    expect(await store.getByCreationIdempotencyKey(original.creationIdempotencyKey)).toMatchObject({
+      id: original.id,
+    });
+    const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM sessions").first<{
+      count: number;
+    }>();
+    expect(count?.count).toBe(1);
+  });
+
   it("atomically snapshots provider auth with the session", async () => {
     const store = new SessionIndexStore(env.DB);
     const now = Date.now();

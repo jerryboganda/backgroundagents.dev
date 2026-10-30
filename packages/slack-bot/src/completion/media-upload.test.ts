@@ -27,6 +27,8 @@ function makeEnv(
   fetchAccess: () => Promise<Response> = async () => Response.json({ artifacts: [] })
 ): Env {
   return {
+    WEBHOOK_DB: {} as D1Database,
+    SLACK_EVENTS_QUEUE: {} as Env["SLACK_EVENTS_QUEUE"],
     SLACK_KV: { get: vi.fn(async () => null) } as unknown as KVNamespace,
     SLACK_COMPLETION_QUEUE: {} as Queue,
     CONTROL_PLANE: {

@@ -2,6 +2,18 @@
 # Linear Bot Worker
 # =============================================================================
 
+resource "cloudflare_queue" "linear_events" {
+  count      = var.enable_linear_bot ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = "open-inspect-linear-events-${local.name_suffix}"
+}
+
+resource "cloudflare_queue" "linear_events_dlq" {
+  count      = var.enable_linear_bot ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = "open-inspect-linear-events-dlq-${local.name_suffix}"
+}
+
 # Build linear-bot worker bundle (only runs during apply, not plan)
 resource "null_resource" "linear_bot_build" {
   count = var.enable_linear_bot ? 1 : 0
@@ -28,6 +40,24 @@ module "linear_bot_worker" {
   kv_namespaces = {
     LINEAR_KV = {
       namespace_id = module.linear_kv[0].namespace_id
+    }
+  }
+
+  d1_databases = {
+    WEBHOOK_DB = {
+      database_id = cloudflare_d1_database.main.id
+    }
+  }
+
+  r2_buckets = {
+    WEBHOOK_PAYLOADS = {
+      bucket_name = cloudflare_r2_bucket.webhook_payloads.name
+    }
+  }
+
+  queue_bindings = {
+    LINEAR_EVENTS_QUEUE = {
+      queue_name = cloudflare_queue.linear_events[0].queue_name
     }
   }
 
@@ -65,6 +95,24 @@ module "linear_bot_worker" {
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]
+  cron_triggers       = ["35 * * * *"]
 
-  depends_on = [null_resource.linear_bot_build[0], module.linear_kv[0]]
+  depends_on = [null_resource.linear_bot_build[0], module.linear_kv[0], null_resource.d1_migrations, cloudflare_r2_bucket_lifecycle.webhook_payloads]
+}
+
+resource "cloudflare_queue_consumer" "linear_events" {
+  count             = var.enable_linear_bot ? 1 : 0
+  account_id        = var.cloudflare_account_id
+  queue_id          = cloudflare_queue.linear_events[0].queue_id
+  type              = "worker"
+  script_name       = module.linear_bot_worker[0].worker_name
+  dead_letter_queue = cloudflare_queue.linear_events_dlq[0].queue_name
+  settings = {
+    batch_size       = 1
+    max_wait_time_ms = 1000
+    max_concurrency  = 5
+    max_retries      = 50
+    retry_delay      = 60
+  }
+  depends_on = [module.linear_bot_worker]
 }

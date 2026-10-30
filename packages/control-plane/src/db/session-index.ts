@@ -121,6 +121,10 @@ export interface SessionEntry {
 
 /** Declarative fields used only when creating a session index row. */
 export interface CreateSessionCommand extends SessionEntry {
+  /** Stable key for a trusted integration's session creation retry. */
+  creationIdempotencyKey?: string;
+  /** Original DO init body, committed with the Linear idempotency reservation. */
+  creationInitPayload?: string;
   /** Memory selection to pin atomically with the session row. */
   memory?: Pinned<SessionMemorySelection>;
   /** Managed-skill manifest to pin atomically with the session row. */
@@ -215,6 +219,47 @@ export class SessionIndexStore {
     return result !== null;
   }
 
+  async getByCreationIdempotencyKey(key: string): Promise<SessionEntry | null> {
+    const result = await this.db
+      .prepare("SELECT * FROM sessions WHERE creation_idempotency_key = ?")
+      .bind(key)
+      .first();
+    const row = parseSessionRow(result);
+    return row ? toEntry(row) : null;
+  }
+
+  async getCreationInitializationSnapshot(id: string): Promise<{
+    payload: string | null;
+    status: SessionEntry["status"];
+    statusRevision: number;
+  } | null> {
+    const row = await this.db
+      .prepare("SELECT creation_init_payload, status, status_revision FROM sessions WHERE id = ?")
+      .bind(id)
+      .first<{
+        creation_init_payload: string | null;
+        status: SessionEntry["status"];
+        status_revision: number;
+      }>();
+    return row
+      ? {
+          payload: row.creation_init_payload,
+          status: row.status,
+          statusRevision: row.status_revision,
+        }
+      : null;
+  }
+
+  async confirmCreationInitialized(id: string): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE sessions SET status = 'created', updated_at = MAX(updated_at, ?)
+         WHERE id = ? AND status IN ('created', 'failed') AND status_revision = 0`
+      )
+      .bind(Date.now(), id)
+      .run();
+  }
+
   async create(session: CreateSessionCommand): Promise<void> {
     const repository = normalizeSessionRepositoryFields(session);
 
@@ -235,8 +280,8 @@ export class SessionIndexStore {
 
     const sessionStmt = this.db
       .prepare(
-        `INSERT INTO sessions (id, title, repo_owner, repo_name, harness, model, reasoning_effort, base_branch, status, parent_session_id, root_session_id, spawn_source, spawn_depth, automation_id, automation_run_id, scm_login, user_id, environment_id, created_at, updated_at, owner_team_id, visibility)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN ? ELSE (SELECT root_session_id FROM sessions WHERE id = ?) END, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO sessions (id, title, repo_owner, repo_name, harness, model, reasoning_effort, base_branch, status, parent_session_id, root_session_id, spawn_source, spawn_depth, automation_id, automation_run_id, scm_login, user_id, environment_id, created_at, updated_at, owner_team_id, visibility, creation_idempotency_key, creation_init_payload)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN ? ELSE (SELECT root_session_id FROM sessions WHERE id = ?) END, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         session.id,
@@ -262,7 +307,9 @@ export class SessionIndexStore {
         session.createdAt,
         session.updatedAt,
         session.ownerTeamId,
-        session.visibility
+        session.visibility,
+        session.creationIdempotencyKey ?? null,
+        session.creationInitPayload ?? null
       );
 
     const repositoryStmts = (session.repositories ?? []).map((repo, position) =>

@@ -301,7 +301,7 @@ function readHostState(dataDir: string): HostState | null {
 /**
  * Replace the marker, durably. Written beside its target and renamed over it,
  * so a process that dies mid-write leaves the previous marker rather than a
- * truncated one — and flushed before the rename and the directory after it,
+ * truncated one — and flushed before the rename and the directory after it on POSIX,
  * because the case this whole file exists for is losing power. A rename that
  * only reached the page cache would let the previous `cleanShutdown: true`
  * come back while the session writes that outran it survived, and the next
@@ -318,6 +318,8 @@ function writeHostState(dataDir: string, state: HostState): void {
     closeSync(file);
   }
   renameSync(temporary, path);
+  // Windows cannot fsync a directory handle; the file is still flushed before rename.
+  if (process.platform === "win32") return;
   const directory = openSync(dataDir, "r");
   try {
     fsyncSync(directory);

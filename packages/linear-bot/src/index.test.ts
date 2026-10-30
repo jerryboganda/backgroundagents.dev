@@ -78,7 +78,7 @@ describe("POST /webhook", () => {
   });
 
   it("deduplicates AgentSessionEvent deliveries by Linear-Delivery header", async () => {
-    const { kv, putCalls } = createFakeKV();
+    const { kv } = createFakeKV();
     const env = makeLinearBotEnv(kv);
     const ctx = makeExecutionContext();
     const payload = makeAgentSessionPayload();
@@ -89,16 +89,13 @@ describe("POST /webhook", () => {
     expect(firstRes.status).toBe(200);
     expect(await firstRes.json()).toEqual({ ok: true });
     expect(duplicateRes.status).toBe(200);
-    expect(await duplicateRes.json()).toEqual({ ok: true, skipped: true, reason: "duplicate" });
-    expect(ctx.waitUntil).toHaveBeenCalledOnce();
-    expect(mocks.handleAgentSessionEvent).toHaveBeenCalledOnce();
-    expect(putCalls).toEqual([
-      { key: "event:delivery-1", value: "1", options: { expirationTtl: 3600 } },
-    ]);
+    expect(await duplicateRes.json()).toEqual({ ok: true });
+    expect(env.LINEAR_EVENTS_QUEUE.send).toHaveBeenCalledTimes(2);
+    expect(mocks.handleAgentSessionEvent).not.toHaveBeenCalled();
   });
 
   it("does not treat distinct Linear-Delivery headers with the same webhookId as duplicates", async () => {
-    const { kv, putCalls } = createFakeKV();
+    const { kv } = createFakeKV();
     const env = makeLinearBotEnv(kv);
     const ctx = makeExecutionContext();
     const payload = makeAgentSessionPayload("stable-webhook-config-id");
@@ -110,9 +107,28 @@ describe("POST /webhook", () => {
     expect(await firstRes.json()).toEqual({ ok: true });
     expect(secondRes.status).toBe(200);
     expect(await secondRes.json()).toEqual({ ok: true });
-    expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
-    expect(mocks.handleAgentSessionEvent).toHaveBeenCalledTimes(2);
-    expect(putCalls.map((call) => call.key)).toEqual(["event:delivery-1", "event:delivery-2"]);
+    expect(env.LINEAR_EVENTS_QUEUE.send).toHaveBeenCalledTimes(2);
+    expect(env.LINEAR_EVENTS_QUEUE.send).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "delivery-1" })
+    );
+    expect(env.LINEAR_EVENTS_QUEUE.send).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "delivery-2" })
+    );
+  });
+
+  it("does not mark a failed delivery and permits a successful redelivery", async () => {
+    const { kv } = createFakeKV();
+    const env = makeLinearBotEnv(kv);
+    const ctx = makeExecutionContext();
+    const payload = makeAgentSessionPayload();
+    vi.mocked(env.LINEAR_EVENTS_QUEUE.send).mockRejectedValueOnce(new Error("transient"));
+    expect((await app.fetch(await makeWebhookRequest(payload, "retry-1"), env, ctx)).status).toBe(
+      503
+    );
+    expect((await app.fetch(await makeWebhookRequest(payload, "retry-1"), env, ctx)).status).toBe(
+      200
+    );
+    expect(env.LINEAR_EVENTS_QUEUE.send).toHaveBeenCalledTimes(2);
   });
 
   it("rejects malformed AgentSessionEvent payloads before dedupe", async () => {

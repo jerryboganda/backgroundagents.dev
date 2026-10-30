@@ -15,6 +15,8 @@ import type { Env } from "./types";
 
 function makeEnv(controlPlaneFetch = vi.fn()): Env {
   return {
+    WEBHOOK_DB: {} as D1Database,
+    SLACK_EVENTS_QUEUE: {} as Env["SLACK_EVENTS_QUEUE"],
     SLACK_KV: {} as KVNamespace,
     SLACK_COMPLETION_QUEUE: { send: vi.fn(async () => {}) } as unknown as Queue,
     CONTROL_PLANE: { fetch: controlPlaneFetch } as unknown as Fetcher,
