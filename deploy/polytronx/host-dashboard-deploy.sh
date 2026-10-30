@@ -181,7 +181,7 @@ build_images() {
     -t "open-inspect-web:$REVISION" .) \
     >/tmp/polytronx-build-web.log 2>&1 &
   p2=$!
-  (cd "$SRC" && exec nice docker build -q -f packages/docs/Dockerfile \
+  (cd "$SRC" && exec nice docker build --progress=plain -f packages/docs/Dockerfile \
     --label "io.polytronx.overlay-revision=$REVISION" \
     -t "open-inspect-docs:$REVISION" .) \
     >/tmp/polytronx-build-docs.log 2>&1 &
@@ -198,7 +198,7 @@ build_images() {
   fi
   if ! wait "$p3"; then
     warn "the docs build failed; the tail of its log follows"
-    tail -n 20 /tmp/polytronx-build-docs.log
+    tail -n 80 /tmp/polytronx-build-docs.log
     failed=1
   fi
   if [ "$failed" = 1 ]; then
