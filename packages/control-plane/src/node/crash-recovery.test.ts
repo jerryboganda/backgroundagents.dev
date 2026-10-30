@@ -23,6 +23,9 @@ import {
 import { openHostAlarmIndex, type HostAlarmIndex } from "./host-alarm-index";
 import { openSessionStore } from "./session-store";
 
+// SQLite file setup is slower under Windows I/O contention.
+vi.setConfig({ testTimeout: process.platform === "win32" ? 20_000 : 5_000 });
+
 const BOOT_MS = 1_000_000;
 
 let dataDir: string;

@@ -768,7 +768,7 @@ describe("preflight.sh checks only the sandbox provider it is configured for", (
         lines.join("\n")
       );
       assert.equal(
-        lines.some((line) => /PASS  loopback port/.test(line)),
+        lines.some((line) => /PASS {2}loopback port/.test(line)),
         false
       );
     }

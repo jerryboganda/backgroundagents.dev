@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 import { NO_AUTHORIZATION } from "../routes/shared";
 import { admit } from "../routing/admit";
@@ -16,6 +16,9 @@ import { GLOBAL_STORE_FILE, startNodeHost, type NodeHost, type NodeHostOptions }
 import { JOB_STORE_FILE } from "./job-store";
 import type { HealthReport } from "./http-server";
 import { openSessionStore } from "./session-store";
+
+// Migrated SQLite host boot and loopback HTTP may exceed 5s on loaded Windows hosts.
+vi.setConfig({ testTimeout: process.platform === "win32" ? 20_000 : 5_000 });
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -205,7 +208,7 @@ describe("startNodeHost", () => {
   });
 
   it("gives up a request that outlives the budget and reports it", async () => {
-    const { routes } = blockingRoute();
+    const { routes, entered } = blockingRoute();
     dataDir = mkdtempSync(join(tmpdir(), "node-host-"));
     host = await startNodeHost({
       config: CONFIG,
@@ -215,8 +218,8 @@ describe("startNodeHost", () => {
     });
     const base = `http://127.0.0.1:${host.address.port}`;
 
-    const blocked = fetch(`${base}/block`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const blocked = expect(fetch(`${base}/block`)).rejects.toThrow();
+    await entered;
     const startedAt = Date.now();
     const report = await host.shutdown();
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(150);
@@ -225,7 +228,7 @@ describe("startNodeHost", () => {
     // armed a deadline, so the next boot goes looking for it.
     expect(marker()).toMatchObject({ cleanShutdown: false });
     // The connection was cut at the end; the peer sees no answer.
-    await expect(blocked).rejects.toThrow();
+    await blocked;
     host = null;
   });
 
