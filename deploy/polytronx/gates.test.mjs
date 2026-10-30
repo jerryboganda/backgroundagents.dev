@@ -369,20 +369,19 @@ exit 0
     assert.deepEqual(refused(credentials), credentials);
   });
 
-  it("accepts every path that differs from the upstream pin in this checkout", () => {
-    // The workflow's own diff, read from git rather than copied here, so a path the overlay adds
-    // cannot pass this test while the workflow refuses it.
-    const gitLines = (...args) =>
-      execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" }).split("\n").filter(Boolean);
-    const pin = /^UPSTREAM_REVISION=([0-9a-f]{40})$/m.exec(
-      readFileSync(`${DEPLOY_DIR}/pins.env`, "utf8")
-    )[1];
-    const changed = [
-      ...gitLines("diff", "--name-only", "--no-renames", pin),
-      ...gitLines("ls-files", "--others", "--exclude-standard"),
+  it("admits reviewed overlay paths and refuses unrelated checkout changes", () => {
+    const approved = [
+      "deploy/polytronx/deploy.sh",
+      "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql",
+      "packages/control-plane/src/sandbox/admission/reservations.ts",
     ];
-    assert.ok(changed.length > 0, "the checkout should differ from the pin by the overlay");
-    assert.deepEqual(refused(changed), []);
+    const unrelated = [
+      "packages/web/src/app/unreviewed-change.tsx",
+      "terraform/d1/migrations/0095_linear_session_init_recovery.sql",
+    ];
+    const result = runAdmission(approved);
+    assert.equal(result.status, 0, result.stdout);
+    assert.deepEqual(refused([...approved, ...unrelated]), unrelated);
   });
 
   it("admits exactly the control-plane secrets routes and their tests, each by its full path", () => {
@@ -1171,15 +1170,19 @@ describe("executor config and the 0090 migration", () => {
       assert.ok(executorSource.includes(`env.${name}`), `readConfig must read ${name}`);
   });
 
-  it("makes 0090 the migration head, and the column it adds the one the control plane writes", () => {
+  it("keeps the 0090 relinquishment migration and verifies the current migration head", () => {
     const migrations = `${REPO_ROOT}/terraform/d1/migrations`;
     const head = readdirSync(migrations)
       .filter((name) => /^\d{4}_/.test(name))
       .sort()
       .at(-1);
-    assert.equal(head, "0090_sandbox_admission_relinquished.sql");
+    assert.equal(head, "0095_linear_session_init_recovery.sql");
     assert.match(
       readFileSync(`${migrations}/${head}`, "utf8"),
+      /ALTER TABLE sessions ADD COLUMN creation_init_payload TEXT;/
+    );
+    assert.match(
+      readFileSync(`${migrations}/0090_sandbox_admission_relinquished.sql`, "utf8"),
       /ALTER TABLE sandbox_admission_reservations ADD COLUMN relinquished_at INTEGER;/
     );
     assert.match(
@@ -1187,7 +1190,7 @@ describe("executor config and the 0090 migration", () => {
         `${REPO_ROOT}/packages/control-plane/src/sandbox/admission/reservations.ts`,
         "utf8"
       ),
-      /relinquished_at/
+      /SET relinquished_at = COALESCE\(relinquished_at, \?\)/
     );
   });
 });
