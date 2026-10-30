@@ -74,6 +74,17 @@ function readDeployLog(sb) {
 }
 
 describe("deploy.sh failure paths", () => {
+  it("supports historical backup and first-docs rollback without reusing the candidate docs image", () => {
+    const lib = readFileSync(`${DEPLOY_DIR}/lib.sh`, "utf8");
+    const rollback = readFileSync(`${DEPLOY_DIR}/rollback.sh`, "utf8");
+    const compose = readFileSync(`${DEPLOY_DIR}/compose.production.yml`, "utf8");
+    assert.match(compose, /profiles: \[docs\]/);
+    assert.match(compose, /DOCS_IMAGE:-open-inspect-docs:legacy-disabled/);
+    assert.match(lib, /env_value DOCS_IMAGE "\$RELEASE_FILE"/);
+    assert.match(lib, /profile=\(--profile docs\)/);
+    assert.match(rollback, /live_compose --profile docs rm -sf docs/);
+    assert.match(rollback, /if \[ -z "\$\{DOCS_IMAGE:-\}" \]; then/);
+  });
   it("a failed up on the first deploy is logged, and offers first-deployment recovery rather than a rollback command", () => {
     const fixture = deployFixture();
     const result = runScript(fixture.sb, "deploy.sh", deployArgs(fixture), { STUB_UP_EXIT: "1" });

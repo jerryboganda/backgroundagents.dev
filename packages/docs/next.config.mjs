@@ -1,16 +1,19 @@
 import { createMDX } from "fumadocs-mdx/next";
+import path from "node:path";
 
 const withMDX = createMDX();
 
 /**
- * The docs site is built and served by Vercel (`vercel build` then
- * `vercel deploy --prebuilt`), so it needs no `output: "standalone"` bundle.
- * Turbopack finds the monorepo root on its own from the root `package-lock.json`.
+ * Trace the monorepo root so the standalone server can run in the VPS container.
  *
  * @type {import("next").NextConfig}
  */
+const monorepoRoot = path.join(import.meta.dirname, "../..");
 const config = {
   reactStrictMode: true,
+  output: "standalone",
+  outputFileTracingRoot: monorepoRoot,
+  turbopack: { root: monorepoRoot },
 };
 
 export default withMDX(config);

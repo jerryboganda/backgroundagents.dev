@@ -7,7 +7,7 @@
 #   polytronx-openinspect_control-plane-data and polytronx-openinspect_object-store-data.
 # - Images by reference only, from release.env, with pull_policy: never. The
 #   deploy script pulls or loads them and checks their IDs before compose runs.
-# - The web dashboard, which upstream does not containerize.
+# - The web dashboard and the public docs site, which upstream does not containerize.
 # - Browser ingress on loopback and on the external edge network the existing
 #   proxy joins. The object store is not published, and the backend network is internal.
 # - No Caddy profile, no Docker socket, no privileged service, no
@@ -232,14 +232,46 @@ services:
     logging: *logging
     restart: unless-stopped
 
+  # Public documentation, deployed with the dashboard from the same reviewed commit.
+  docs:
+    profiles: [docs]
+    image: ${DOCS_IMAGE:-open-inspect-docs:legacy-disabled}
+    pull_policy: never
+    ports:
+      - "127.0.0.1:${DOCS_LOOPBACK_PORT:-13081}:3000"
+    networks:
+      edge:
+        aliases:
+          - polytronx-openinspect-docs
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 15s
+    mem_limit: ${DOCS_MEM_LIMIT:-512m}
+    cpus: ${DOCS_CPUS:-1}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    restart: unless-stopped
+
 volumes:
   control-plane-data:
   object-store-data:
 
 networks:
   # Created by deploy.sh once, after preflight. The existing proxy joins it so it can
-  # reach web and app by the aliases polytronx-openinspect-web and
-  # polytronx-openinspect-app. Only the proxy and these two services may attach.
+  # reach app, web and docs by their unique polytronx-openinspect-* aliases.
+  # Only the proxy and these three services may attach.
   edge:
     name: ${POLYTRONX_EDGE_NETWORK:-polytronx-edge}
     external: true

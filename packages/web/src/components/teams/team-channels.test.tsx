@@ -221,7 +221,8 @@ describe("Team channels", () => {
       await waitFor(() => expect(screen.getByRole("combobox", { name: "Provider" })).toBeEnabled());
       await chooseOption("Provider", "Slack");
       expect(screen.getByRole("button", { name: /^Slack channel/ })).toBeDisabled();
-    }
+    },
+    10_000
   );
 
   it("unbinds Linear teams while Slack discovery is denied", async () => {

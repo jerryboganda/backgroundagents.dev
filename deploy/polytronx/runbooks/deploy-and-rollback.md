@@ -22,10 +22,10 @@ its volumes are `polytronx-openinspect_control-plane-data` and
 
 Run the workflow `.github/workflows/polytronx-openinspect.yml` by hand (`workflow_dispatch`) on the
 commit under test. It checks that the upstream pin is intact, runs the owner-bootstrap tests and the
-static checks, renders both Compose files, builds both images from the pinned source, smokes them,
-and uploads a `polytronx-release` artifact containing `release-manifest.env`, the two image
-archives, and `SHA256SUMS`. The workflow has no publish step. Registry publication is a separate,
-owner-authorized change and is not part of this runbook.
+static checks, renders both Compose files, builds the control-plane, dashboard, docs and executor
+images, smokes them, and uploads a `polytronx-release` artifact containing `release-manifest.env`,
+four image archives, and `SHA256SUMS`. The workflow has no publish step. Registry publication is a
+separate, owner-authorized change and is not part of this runbook.
 
 ## 2. Transfer to the VPS (operator workstation)
 
@@ -115,6 +115,11 @@ network attach and the ai host replacement).
 If smoke fails, `deploy.sh` prints the rollback command. Its target is `state/last-good.env`, the
 last release that passed smoke. For a manual rollback to the release before that one, use
 `state/previous-good.env`:
+
+Older release files without docs metadata automatically select the original stack. Backups and
+preflight can use those files after the new Compose source is installed, without migrating them.
+Rolling back the first docs release removes the docs container and restores the older application
+stack without depending on the failed docs image. This applies to both SSH and artifact deployments.
 
     source/deploy/polytronx/rollback.sh \
       --to state/previous-good.env --secrets-dir secrets --source source \

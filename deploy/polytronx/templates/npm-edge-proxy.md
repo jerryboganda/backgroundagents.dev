@@ -1,9 +1,9 @@
-# Nginx Proxy Manager: edge routes for ai and cp
+# Nginx Proxy Manager: edge routes for ai, cp and public docs
 
 Owner-run steps in the existing NPM web UI. Do not edit NPM's generated files on disk, and do not
-restart NPM. The routes reach the two services by container name over the dedicated `polytronx-edge`
-network, not through host loopback. Docker cannot route a container to a loopback-only published
-port, so the loopback ports serve only host-local checks.
+restart NPM. The routes reach the three services by container name over the dedicated
+`polytronx-edge` network, not through host loopback. Docker cannot route a container to a
+loopback-only published port, so the loopback ports serve only host-local checks.
 
 ## Gate 0: attach NPM to the edge network (owner authorization required)
 
@@ -13,8 +13,8 @@ Once, after `deploy.sh` has created `polytronx-edge`:
 
 This adds a network attachment to the existing NPM container. It does not restart it, but it changes
 an existing container, so it needs the owner's explicit approval. Afterwards NPM can resolve
-`polytronx-openinspect-web` and `polytronx-openinspect-app`. Revert with `docker network disconnect`
-if needed.
+`polytronx-openinspect-web`, `polytronx-openinspect-app` and `polytronx-openinspect-docs`. Revert
+with `docker network disconnect` if needed.
 
 ## Route 1: ai.polytronx.com (web)
 
@@ -62,7 +62,15 @@ The DNS record for `cp.ai.polytronx.com` does not exist yet (NXDOMAIN at the aud
 creates it. Confirm whether it is DNS-only or proxied before requesting a certificate: an HTTP-01
 challenge needs the name to reach this host.
 
-## Route 3: replacing the existing ai host (owner authorization required)
+## Route 3: docs.backgroundagents.dev (public documentation)
+
+For `docs.backgroundagents.dev`, add a separate Proxy Host after the reviewed docs container is
+healthy: scheme `http`, forward hostname `polytronx-openinspect-docs`, forward port `3000`, HTTPS
+enabled. Point the hostname's DNS record to the dashboard VPS (`185.252.233.186`) and confirm the
+certificate before publishing. The docs container shares the edge network; do not route the docs
+domain to the dashboard UI.
+
+## Replacing the existing ai host (owner authorization required)
 
 The current ai host forwards to `omo:7681` behind Basic Auth. The owner has authorized replacing
 that application. Sequence:
@@ -80,6 +88,7 @@ Rollback at any step: re-enable the old host in the UI. Nothing is deleted befor
 
     curl -sI https://ai.polytronx.com/ | head -n1          # 200, 307 or 308
     curl -s  https://cp.ai.polytronx.com/healthz            # {"status":"ok",...}
+    curl -fI https://docs.backgroundagents.dev/             # 200
 
 WebSocket streaming needs a browser: open a session, watch it stream, reload, and confirm it
 reattaches. Record the result in the evidence register.

@@ -36,6 +36,11 @@ while [ "$#" -gt 0 ]; do
     *) usage; die "unknown argument: $1" ;;
   esac
 done
+if [ -n "${DOCS_IMAGE:-}" ]; then
+  actual="$(docker image inspect -f '{{.Id}}' "$DOCS_IMAGE" 2>/dev/null || true)"
+  [ -n "${DOCS_IMAGE_ID:-}" ] && [ "$actual" = "$DOCS_IMAGE_ID" ] ||
+    die "DOCS target image is missing or differs from its recorded ID (nothing was changed)"
+fi
 [ -n "$TARGET" ] && [ -n "$SECRETS_DIR" ] && [ -n "$SOURCE_DIR" ] && [ -n "$STATE_DIR" ] ||
   { usage; die "missing a required option"; }
 [ "$CONFIRM" = "$LIVE_PROJECT" ] || die "pass --confirm $LIVE_PROJECT to roll back the live project"
@@ -75,6 +80,10 @@ fi
   die "preflight reported blockers for the rollback target (nothing was changed)"
 
 info "rolling back to revision $OPEN_INSPECT_REVISION"
+if [ -z "${DOCS_IMAGE:-}" ]; then
+  # A first docs release may be unhealthy; remove its container before restoring the older stack.
+  live_compose --profile docs rm -sf docs || die "could not remove the failed docs container"
+fi
 cp "$TARGET" "$STATE_DIR/attempted.env"
 if ! live_compose up -d --wait --wait-timeout 420 --pull never; then
   printf '%s rollback FAILED up revision=%s\n' "$(date -u +%FT%TZ)" "$OPEN_INSPECT_REVISION" >>"$STATE_DIR/deploy-log.txt"

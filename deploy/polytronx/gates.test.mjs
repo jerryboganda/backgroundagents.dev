@@ -31,6 +31,18 @@ const HEALTHY =
   '{"success":true,"data":{"status":"healthy","max_active_sandboxes":2,"capacity_enforcement":"pre-create"}}';
 const WORKFLOW = readFileSync(`${REPO_ROOT}/.github/workflows/polytronx-openinspect.yml`, "utf8");
 
+describe("docs release artifact", () => {
+  it("builds, checks and exports the docs image with its verified ID", () => {
+    assert.match(WORKFLOW, /- name: Build the docs image/);
+    assert.match(WORKFLOW, /- name: Check the docs image layout and HTTP response/);
+    assert.match(WORKFLOW, /docker save -o release\/docs\.tar/);
+    assert.match(WORKFLOW, /docs\.tar:\$DOCS_IMAGE_ID/);
+    assert.match(WORKFLOW, /DOCS_IMAGE=open-inspect-docs:\$OVERLAY_REVISION/);
+    assert.match(WORKFLOW, /DOCS_IMAGE_ID=\$DOCS_IMAGE_ID/);
+    assert.match(WORKFLOW, /sha256sum control-plane\.tar web\.tar docs\.tar executor\.tar/);
+  });
+});
+
 /** The shell script of one workflow step, with the YAML block indentation removed. */
 function workflowStep(name) {
   const lines = WORKFLOW.split(/\r?\n/);

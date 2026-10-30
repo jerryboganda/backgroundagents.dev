@@ -1,5 +1,6 @@
-name: Deploy Docs
+name: Deploy Docs to Vercel (optional)
 
+# Optional Vercel hosting only. VPS docs deploy with ssh-deploy-dashboard.yml.
 # Docs publication is manual: a maintainer runs this workflow from the Actions
 # tab after CI is green on main. It only runs for the main branch and deploys
 # the commit at the tip of main when it starts.

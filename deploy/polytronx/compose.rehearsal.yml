@@ -24,6 +24,8 @@ services:
     ports: !override []
   web:
     ports: !override []
+  docs:
+    ports: !override []
 
 networks:
   edge:
