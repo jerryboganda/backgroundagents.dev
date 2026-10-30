@@ -54,3 +54,14 @@ test("every workflow names itself and declares what it may do", async () => {
     assert.ok(document.permissions, `${file.pathname} declares no permissions`);
   }
 });
+
+test("main CI runs shared and every webhook bot's unit tests", async () => {
+  const ci = parse(await readFile(new URL("ci.yml", workflowsDirectory), "utf8"));
+  const commands = ci.jobs.checks.steps.map((step) => step.run).filter(Boolean);
+  for (const bot of ["shared", "github-bot", "slack-bot", "linear-bot"]) {
+    assert.ok(
+      commands.includes(`npm test -w @open-inspect/${bot}`),
+      `main CI must test @open-inspect/${bot}`
+    );
+  }
+});

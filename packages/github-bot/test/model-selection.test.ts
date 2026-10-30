@@ -96,7 +96,18 @@ describe("applyInlineModelOverrides", () => {
     ).toEqual({
       ok: false,
       message:
-        "Reasoning effort `high` is not valid for `opencode/kimi-k3`. This model does not support reasoning controls.",
+        "Reasoning effort `high` is not valid for `opencode/kimi-k3`. Supported values: `max`.",
+    });
+    expect(
+      applyInlineModelOverrides(
+        { model: "opencode/kimi-k3", reasoningEffort: "max" },
+        defaults,
+        enabledModels,
+        harness
+      )
+    ).toMatchObject({
+      ok: true,
+      selection: { model: "opencode/kimi-k3", reasoningEffort: "max" },
     });
   });
 

@@ -29,7 +29,23 @@ vi.mock("@open-inspect/shared/slack", async () => {
   };
 });
 
-import app from "./index";
+import worker from "./index";
+import { handleSlackEvent } from "./events/dispatcher";
+import { consumeSlackEvents } from "./events/consumer";
+const app = {
+  fetch: async (request: Request, env: Env, ctx: ReturnType<typeof makeCtx>) => {
+    env.SLACK_EVENTS_QUEUE = {
+      send: async ({ payload, id }: Parameters<Env["SLACK_EVENTS_QUEUE"]["send"]>[0]) => {
+        ctx.waitUntil(
+          Promise.resolve().then(() =>
+            handleSlackEvent(payload!, env, id, (task) => ctx.waitUntil(task))
+          )
+        );
+      },
+    } as unknown as Env["SLACK_EVENTS_QUEUE"];
+    return worker.fetch(request, env, ctx);
+  },
+};
 import { clearLocalCache } from "./classifier/repos";
 import { clearBotUserIdCache } from "./bot-identity";
 
@@ -38,6 +54,8 @@ const BOT_USER_ID = "UBOT123";
 function createMockKV() {
   const store = new Map<string, string>();
   return {
+    WEBHOOK_DB: {} as D1Database,
+    SLACK_EVENTS_QUEUE: {} as Env["SLACK_EVENTS_QUEUE"],
     get: vi.fn(async (key: string, type?: string) => {
       const value = store.get(key);
       if (!value) return null;
@@ -221,9 +239,69 @@ describe("channel-message automation triggers (POST /events)", () => {
     const ctx = makeCtx();
 
     await app.fetch(channelMessageRequest({}), env, ctx);
-    await flushWaitUntil(ctx);
+    await expect(flushWaitUntil(ctx)).rejects.toThrow("invalid response");
 
     expect(mockAddReaction).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed automation forward without acking, then acks after delivery", async () => {
+    const env = makeEnv();
+    const fetchMock = env.CONTROL_PLANE.fetch as unknown as ReturnType<typeof vi.fn>;
+    const originalFetch = fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL
+    ) => Promise<Response>;
+    let failForward = true;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (failForward && String(input).includes("/internal/slack-event")) {
+        failForward = false;
+        return new Response("unavailable", { status: 503 });
+      }
+      return originalFetch(input);
+    });
+
+    let status: "" | "processing" | "processed" = "";
+    const db = {
+      prepare: (sql: string) => ({
+        bind: (..._params: unknown[]) => ({
+          run: async () => {
+            if (sql.includes("INSERT INTO")) {
+              if (status) return { meta: { changes: 0 } };
+              status = "processing";
+            } else if (sql.includes("SET status = 'processed'")) {
+              status = "processed";
+            } else if (sql.includes("DELETE FROM")) {
+              status = "";
+            }
+            return { meta: { changes: 1 } };
+          },
+          first: async () => ({ status }),
+        }),
+      }),
+    };
+    env.WEBHOOK_DB = db as unknown as D1Database;
+    const payload = (await channelMessageRequest({}).json()) as Parameters<
+      typeof handleSlackEvent
+    >[0];
+    const message = () => ({ body: { id: "delivery-1", payload }, ack: vi.fn(), retry: vi.fn() });
+    const first = message();
+    await consumeSlackEvents(
+      { messages: [first] } as unknown as Parameters<typeof consumeSlackEvents>[0],
+      env
+    );
+    expect(first.retry).toHaveBeenCalledOnce();
+    expect(first.ack).not.toHaveBeenCalled();
+    expect(status).toBe("");
+
+    const second = message();
+    await consumeSlackEvents(
+      { messages: [second] } as unknown as Parameters<typeof consumeSlackEvents>[0],
+      env
+    );
+    expect(second.ack).toHaveBeenCalledOnce();
+    expect(second.retry).not.toHaveBeenCalled();
+    expect(status).toBe("processed");
+    expect(forwardedSlackEvents(fetchMock)).toHaveLength(2);
+    expect(mockAddReaction).toHaveBeenCalledOnce();
   });
 
   it("does not forward a message in an unwatched channel", async () => {

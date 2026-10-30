@@ -3,13 +3,27 @@
  */
 import type { ControlPlaneFetcher } from "@open-inspect/shared/service-auth";
 import type { GitHubAutofixEnvelope } from "@open-inspect/shared";
+import type { WebhookPayload } from "@open-inspect/shared/webhook-queue";
+
+export type GitHubWebhookMessage = {
+  deliveryId: string;
+  traceId: string;
+  event: string | undefined;
+  receivedAt: string;
+} & WebhookPayload<unknown>;
 
 export interface Env {
+  /** D1 provides atomic, fenced webhook delivery claims. */
+  DB: D1Database;
+  WEBHOOK_PAYLOADS?: R2Bucket;
   /** KV namespace for deduplicating webhook deliveries. */
   GITHUB_KV: KVNamespace;
 
   /** Durable handoff for pull request feedback that may trigger Autofix. */
   AUTOFIX_QUEUE: Queue<GitHubAutofixEnvelope>;
+
+  /** Durable intake for every GitHub webhook, including lifecycle forwarding. */
+  WEBHOOK_QUEUE: Queue<GitHubWebhookMessage>;
 
   /** Service binding to the control plane worker. */
   CONTROL_PLANE: ControlPlaneFetcher;

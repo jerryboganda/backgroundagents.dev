@@ -3,12 +3,16 @@
  */
 
 import type { ControlPlaneFetcher } from "@open-inspect/shared/service-auth";
+import type { WebhookPayload } from "@open-inspect/shared/webhook-queue";
 import { z } from "zod";
 
 /**
  * Cloudflare Worker environment bindings.
  */
 export interface Env {
+  WEBHOOK_DB: D1Database;
+  WEBHOOK_PAYLOADS?: R2Bucket;
+  LINEAR_EVENTS_QUEUE: Queue<{ id: string } & WebhookPayload<AgentSessionWebhook>>;
   // KV namespace for config, runtime-token cache, and issue-to-session mapping
   LINEAR_KV: KVNamespace;
 
@@ -134,6 +138,16 @@ export const issueSessionSchema = z.object({
   model: z.string(),
   agentSessionId: z.string().optional(),
   createdAt: z.number(),
+  /** Original queue delivery, used to distinguish an initial prompt retry from a follow-up. */
+  initialDeliveryId: z.string().optional(),
+  /** Persisted before sending the first prompt so a retry reuses the created session. */
+  pendingInitialPrompt: z
+    .object({
+      body: z.string(),
+      actorUserId: z.string(),
+      promptLength: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export type IssueSession = z.infer<typeof issueSessionSchema>;

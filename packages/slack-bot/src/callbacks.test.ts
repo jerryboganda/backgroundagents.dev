@@ -12,6 +12,8 @@ import {
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
+    WEBHOOK_DB: {} as D1Database,
+    SLACK_EVENTS_QUEUE: {} as Env["SLACK_EVENTS_QUEUE"],
     SLACK_KV: {
       get: vi.fn(async () => null),
       put: vi.fn(async () => {}),

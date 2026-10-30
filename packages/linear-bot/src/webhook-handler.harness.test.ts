@@ -314,7 +314,7 @@ describe("handleAgentSessionEvent harness selection", () => {
 
     expect(createBody).toMatchObject({ harness: "claude", model: "anthropic/claude-sonnet-4-6" });
     expect(activities).toContain("agent: Claude Agent, model: anthropic/claude-sonnet-4-6");
-    expect(issueSessionWrites).toBe(1);
+    expect(issueSessionWrites).toBe(2);
   });
 
   it("ignores disabled user and label overrides before checking compatibility", async () => {

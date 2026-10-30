@@ -1,13 +1,11 @@
 import { verifySlackSignature } from "@open-inspect/shared/slack";
-import { createKvCacheStore } from "@open-inspect/shared/cache-store";
+import { enqueueWebhookPayload } from "@open-inspect/shared/webhook-queue";
 import { Hono } from "hono";
-import { handleSlackEvent } from "../events/dispatcher";
 import { slackEventPayloadSchema } from "../events/payload";
 import { createLogger } from "../logger";
 import type { Env } from "../types";
 
 const log = createLogger("handler");
-const EVENT_DEDUPE_TTL_MS = 60 * 60 * 1000;
 export const eventRoutes = new Hono<{ Bindings: Env }>();
 
 eventRoutes.post("/events", async (c) => {
@@ -43,38 +41,20 @@ eventRoutes.post("/events", async (c) => {
   const payload = parsedPayload.data;
   if (payload.type === "url_verification") return c.json({ challenge: payload.challenge });
 
-  const eventId = payload.event_id;
-  if (eventId) {
-    const cacheStore = createKvCacheStore(c.env.SLACK_KV);
-    const dedupeKey = `event:${eventId}`;
-    let kvOperation: "get" | "put" = "get";
-    try {
-      if (await cacheStore.get(dedupeKey)) {
-        log.debug("slack.event.duplicate", { trace_id: traceId, event_id: eventId });
-        return c.json({ ok: true });
-      }
-      kvOperation = "put";
-      await cacheStore.put(dedupeKey, "1", { ttlMs: EVENT_DEDUPE_TTL_MS });
-    } catch (error) {
-      // This cache is best-effort. Returning 500 would drop the original work and guarantee retries.
-      log.error("slack.event.dedupe_unavailable", {
-        trace_id: traceId,
-        event_id: eventId,
-        event_type: payload.event?.type,
-        kv_operation: kvOperation,
-        slack_retry_num: c.req.header("x-slack-retry-num"),
-        slack_retry_reason: c.req.header("x-slack-retry-reason"),
-        outcome: "degraded",
-        degradation_mode: "process_without_deduplication",
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-    }
+  const eventId =
+    payload.event_id ??
+    `body:${await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)).then((value) => Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(""))}`;
+  try {
+    await enqueueWebhookPayload(
+      c.env.SLACK_EVENTS_QUEUE,
+      c.env.WEBHOOK_PAYLOADS,
+      { id: eventId },
+      payload
+    );
+  } catch (error) {
+    log.error("slack.event.enqueue_failed", { trace_id: traceId, event_id: eventId, error });
+    return c.json({ error: "Webhook queue unavailable" }, 503);
   }
-  const scheduleBackground = (promise: Promise<void>) => c.executionCtx.waitUntil(promise);
-  const eventTask = Promise.resolve().then(() =>
-    handleSlackEvent(payload, c.env, traceId, scheduleBackground)
-  );
-  c.executionCtx.waitUntil(eventTask);
   log.info("http.request", {
     trace_id: traceId,
     http_method: "POST",

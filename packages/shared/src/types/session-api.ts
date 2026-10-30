@@ -5,7 +5,7 @@ import { sessionSkillSelectionSchema } from "./skills";
 import { artifactTypeSchema, type AgentResponse, type StoredFileArtifactType } from "./artifacts";
 import { sessionRepositoriesInputSchema } from "./repositories";
 import type { EventResponse } from "./sandbox-events";
-import { MAX_WEB_PROMPT_CHARS, promptContentSchema } from "./prompts";
+import { MAX_WEB_PROMPT_CHARS, clientRequestIdSchema, promptContentSchema } from "./prompts";
 import { modelProviderSelectionsSchema } from "./provider-accounts";
 import { sessionVisibilitySchema } from "./teams";
 import {
@@ -150,6 +150,7 @@ export const sendPromptRequestSchema = z
   .object({
     content: promptContentSchema,
     source: messageSourceSchema.optional(),
+    clientRequestId: clientRequestIdSchema.optional(),
     model: z.string().optional(),
     reasoningEffort: z.string().optional(),
     attachments: z.unknown().optional(),
@@ -278,6 +279,8 @@ export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const createSessionInputSchema = createSessionRequestBaseSchema
   .extend({
+    /** Signed Linear service requests may supply a stable creation key for retries. */
+    idempotencyKey: z.string().min(1).max(256).optional(),
     // Profile fields accompany the identity asserted by a verified principal;
     // callers may not assert provider/user IDs or SCM credentials. The
     // control plane treats actorEmail as identity-bearing only when an

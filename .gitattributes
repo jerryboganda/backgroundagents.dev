@@ -22,3 +22,8 @@ packages/sandbox-images/install/runtime.sh text eol=lf
 packages/sandbox-images/install/tools.sh text eol=lf
 packages/sandbox-images/vps/entrypoint.sh text eol=lf
 packages/sandbox-runtime/src/sandbox_runtime/bin/oi-git-sign text eol=lf
+# Generated memory contracts are compared byte-for-byte by shared tests.
+packages/sandbox-runtime/src/sandbox_runtime/memory_contract.json text eol=lf
+packages/sandbox-runtime/src/sandbox_runtime/tools/_memory-contract.js text eol=lf
+# Keep the committed CRLF bytes in this legacy source file.
+packages/control-plane/src/db/session-index.ts -text whitespace=cr-at-eol

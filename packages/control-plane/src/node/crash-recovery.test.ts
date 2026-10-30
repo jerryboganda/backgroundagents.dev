@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -71,6 +72,10 @@ afterEach(() => {
 });
 
 describe("recoverSessionDeadlines", () => {
+  it("writes and reads a clean-shutdown marker on the host platform", () => {
+    markCleanShutdown(dataDir, BOOT_MS);
+    expect(marker()).toEqual({ indexedThroughMs: BOOT_MS, cleanShutdown: true });
+  });
   it("arms a deadline the session persisted and the index never recorded", () => {
     // Exactly the window the recovery exists for: the session committed its
     // deadline and the process died before the index row was written.
@@ -187,7 +192,10 @@ describe("recoverSessionDeadlines", () => {
     // A link that resolves to itself: statting it fails with ELOOP, not
     // ENOENT. Reading that as "written long ago" would skip the session and
     // still advance the point past it.
-    symlinkSync("loop.db", join(dataDir, "sessions", "loop.db"));
+    // Windows without Developer Mode cannot create symbolic links. A directory
+    // named *.db is also unreadable and must keep the recovery point open.
+    if (process.platform === "win32") mkdirSync(join(dataDir, "sessions", "loop.db"));
+    else symlinkSync("loop.db", join(dataDir, "sessions", "loop.db"));
 
     const report = recover(BOOT_MS + 1);
 

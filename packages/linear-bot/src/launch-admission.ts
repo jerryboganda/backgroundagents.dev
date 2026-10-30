@@ -69,6 +69,7 @@ export async function createSession(
     actorDisplayName?: string;
     actorEmail?: string;
     teamId: string | null;
+    idempotencyKey: string;
   },
   traceId?: string
 ): Promise<{ ok: true; sessionId: string } | { ok: false; status: number; body: string }> {
@@ -82,6 +83,7 @@ export async function createSession(
     actorDisplayName: params.actorDisplayName,
     actorEmail: params.actorEmail,
     teamId: params.teamId,
+    idempotencyKey: params.idempotencyKey,
   });
   const response = await signedControlPlaneFetch(env, {
     method: "POST",

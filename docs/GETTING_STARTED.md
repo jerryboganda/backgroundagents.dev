@@ -1267,13 +1267,17 @@ Cloudflare provisions the DNS record and edge certificate automatically. Notes:
 
 ---
 
-## Set Up CI/CD (Optional)
+## CI Checks and Deployment Credentials (Optional)
 
-Enable automatic deployments when you push to main by configuring GitHub Actions secrets and
-variables under your fork's **Settings → Secrets and variables → Actions**.
+The checked-in `.github/workflows/ci.yml` validates pull requests and pushes to `main` but does not
+deploy. There is no `.github/workflows/terraform.yml`, so setting GitHub Actions credentials does
+not enable automatic production Terraform plans or applies. Follow the manual deployment procedure
+in [terraform/README.md](../terraform/README.md), supplying production credentials and backend
+configuration on the operator's machine.
 
-Use the **Variables** tab for the following non-secret settings (only configure the providers and
-features you use):
+If you configure a separate deployment workflow, use the **Variables** tab under your fork's
+**Settings → Secrets and variables → Actions** for the following non-secret settings (only configure
+the providers and features you use):
 
 ```text
 # Deployment and Cloudflare
@@ -1508,10 +1512,9 @@ PEM formatting is preserved:
 gh secret set GH_APP_PRIVATE_KEY < private-key-pkcs8.pem
 ```
 
-Once configured, the GitHub Actions workflow will:
-
-- Run `terraform plan` on pull requests (with PR comment)
-- Run `terraform apply` when merged to main
+The checked-in CI workflow does not use these settings to deploy. A credentialed operator must run
+and review `terraform plan`, then run `terraform apply` manually from
+`terraform/environments/production`.
 
 Terraform generates and persists `PROVIDER_ACCOUNTS_ENCRYPTION_KEY` when no override is configured.
 Existing local Terraform installations retain an existing key through the
@@ -1570,8 +1573,10 @@ git pull upstream main
 # Rebuild shared package if it changed
 npm run build -w @open-inspect/shared
 
-# Re-run Terraform (it only changes what's needed)
+# Initialize the backend, review the plan, then apply it manually
 cd terraform/environments/production
+terraform init -backend-config=backend.tfvars
+terraform plan
 terraform apply
 ```
 
