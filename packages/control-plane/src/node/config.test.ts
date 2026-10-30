@@ -1,3 +1,4 @@
+import { resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MIGRATIONS_DIR, readEnvConfig, readNodeHostSettings } from "./config";
 
@@ -42,15 +43,16 @@ describe("readEnvConfig", () => {
 describe("readNodeHostSettings", () => {
   it("requires DATA_DIR and defaults the rest", () => {
     expect(() => readNodeHostSettings({})).toThrow("DATA_DIR is required");
-    const settings = readNodeHostSettings({ DATA_DIR: "/var/lib/oi" });
+    const dataDir = resolve("oi-data");
+    const settings = readNodeHostSettings({ DATA_DIR: dataDir });
     expect(settings).toEqual({
       host: "0.0.0.0",
       port: 8787,
-      dataDir: "/var/lib/oi",
+      dataDir,
       migrationsDir: DEFAULT_MIGRATIONS_DIR,
       shutdownTimeoutMs: 30_000,
     });
-    expect(DEFAULT_MIGRATIONS_DIR.endsWith("/terraform/d1/migrations")).toBe(true);
+    expect(DEFAULT_MIGRATIONS_DIR.endsWith(`terraform${sep}d1${sep}migrations`)).toBe(true);
   });
 
   it("reads the overrides and rejects a malformed number", () => {
@@ -58,13 +60,13 @@ describe("readNodeHostSettings", () => {
       DATA_DIR: "data",
       HOST: "127.0.0.1",
       PORT: "9000",
-      MIGRATIONS_DIR: "/srv/migrations",
+      MIGRATIONS_DIR: resolve("migrations"),
       SHUTDOWN_TIMEOUT_MS: "5000",
     });
     expect(settings.host).toBe("127.0.0.1");
     expect(settings.port).toBe(9000);
-    expect(settings.dataDir).toBe(`${process.cwd()}/data`);
-    expect(settings.migrationsDir).toBe("/srv/migrations");
+    expect(settings.dataDir).toBe(resolve("data"));
+    expect(settings.migrationsDir).toBe(resolve("migrations"));
     expect(settings.shutdownTimeoutMs).toBe(5000);
     expect(() => readNodeHostSettings({ DATA_DIR: "data", PORT: "80a" })).toThrow(
       "PORT must be a non-negative integer, got 80a"

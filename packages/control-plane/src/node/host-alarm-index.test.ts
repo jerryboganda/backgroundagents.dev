@@ -245,7 +245,9 @@ describe("openHostAlarmIndex", () => {
     const first = open();
     first.set("s1", 700);
     first.close();
-    expect(statSync(join(dataDir, "host-alarms.db")).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(join(dataDir, "host-alarms.db")).mode & 0o777).toBe(0o600);
+    }
     expect(open().earliest()).toEqual({ sessionId: "s1", deadline: 700 });
     expect(existsSync(join(dataDir, "host-alarms.db"))).toBe(true);
   });

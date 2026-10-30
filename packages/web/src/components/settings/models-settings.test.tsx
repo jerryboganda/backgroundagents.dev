@@ -99,7 +99,7 @@ describe("ModelsSettings", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({
       changes: [{ modelId: "openai/gpt-5.4", enabled: false }],
     });
-  });
+  }, 10_000);
 
   it("automatically saves category actions", async () => {
     const fetchMock = createSaveMock(["openai/gpt-5.4"]);

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,11 +12,11 @@ describe("control-plane worker build", () => {
   it(
     "uses the workerd AsyncLocalStorage implementation",
     () => {
-      execFileSync("npm", ["run", "build", "-w", "@open-inspect/shared"], {
+      execSync("npm run build -w @open-inspect/shared", {
         cwd: repositoryDirectory,
         stdio: "pipe",
       });
-      execFileSync("npm", ["run", "build"], {
+      execSync("npm run build", {
         cwd: packageDirectory,
         stdio: "pipe",
       });
