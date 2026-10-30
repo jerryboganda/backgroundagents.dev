@@ -31,6 +31,18 @@ const HEALTHY =
   '{"success":true,"data":{"status":"healthy","max_active_sandboxes":2,"capacity_enforcement":"pre-create"}}';
 const WORKFLOW = readFileSync(`${REPO_ROOT}/.github/workflows/polytronx-openinspect.yml`, "utf8");
 
+describe("docs release artifact", () => {
+  it("builds, checks and exports the docs image with its verified ID", () => {
+    assert.match(WORKFLOW, /- name: Build the docs image/);
+    assert.match(WORKFLOW, /- name: Check the docs image layout and HTTP response/);
+    assert.match(WORKFLOW, /docker save -o release\/docs\.tar/);
+    assert.match(WORKFLOW, /docs\.tar:\$DOCS_IMAGE_ID/);
+    assert.match(WORKFLOW, /DOCS_IMAGE=open-inspect-docs:\$OVERLAY_REVISION/);
+    assert.match(WORKFLOW, /DOCS_IMAGE_ID=\$DOCS_IMAGE_ID/);
+    assert.match(WORKFLOW, /sha256sum control-plane\.tar web\.tar docs\.tar executor\.tar/);
+  });
+});
+
 /** The shell script of one workflow step, with the YAML block indentation removed. */
 function workflowStep(name) {
   const lines = WORKFLOW.split(/\r?\n/);
@@ -45,6 +57,20 @@ function workflowStep(name) {
   }
   return body.join("\n");
 }
+
+describe("compose-render CI", () => {
+  it("includes profiled docs in every production and rehearsal render", () => {
+    const script = [
+      workflowStep("Render with placeholder values, then without an image reference"),
+      workflowStep("Check the rendered configuration"),
+    ].join("\n");
+    const calls = [
+      ...script.matchAll(/docker compose -p polytronx-openinspect(?:-rehearsal)?\b[^\n]*/g),
+    ].map(([line]) => line);
+    assert.equal(calls.length, 6);
+    for (const call of calls) assert.match(call, /--profile docs/, call);
+  });
+});
 
 /** Runs provider_cap_problem against a control-plane.env with the given lines, and a stubbed curl. */
 function capGate(
@@ -369,15 +395,16 @@ exit 0
     assert.deepEqual(refused(credentials), credentials);
   });
 
-  it("admits reviewed overlay paths and refuses unrelated checkout changes", () => {
+  it("admits reviewed overlay and pinned drift paths, refuses unrelated checkout changes", () => {
     const approved = [
       "deploy/polytronx/deploy.sh",
       "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql",
+      "terraform/d1/migrations/0095_linear_session_init_recovery.sql",
       "packages/control-plane/src/sandbox/admission/reservations.ts",
     ];
     const unrelated = [
       "packages/web/src/app/unreviewed-change.tsx",
-      "terraform/d1/migrations/0095_linear_session_init_recovery.sql",
+      "terraform/d1/migrations/0095_linear_session_init_recovery.sql.bak",
     ];
     const result = runAdmission(approved);
     assert.equal(result.status, 0, result.stdout);

@@ -74,6 +74,17 @@ function readDeployLog(sb) {
 }
 
 describe("deploy.sh failure paths", () => {
+  it("supports historical backup and first-docs rollback without reusing the candidate docs image", () => {
+    const lib = readFileSync(`${DEPLOY_DIR}/lib.sh`, "utf8");
+    const rollback = readFileSync(`${DEPLOY_DIR}/rollback.sh`, "utf8");
+    const compose = readFileSync(`${DEPLOY_DIR}/compose.production.yml`, "utf8");
+    assert.match(compose, /profiles: \[docs\]/);
+    assert.match(compose, /DOCS_IMAGE:-open-inspect-docs:legacy-disabled/);
+    assert.match(lib, /env_value DOCS_IMAGE "\$RELEASE_FILE"/);
+    assert.match(lib, /profile=\(--profile docs\)/);
+    assert.match(rollback, /live_compose --profile docs rm -sf docs/);
+    assert.match(rollback, /if \[ -z "\$\{DOCS_IMAGE:-\}" \]; then/);
+  });
   it("a failed up on the first deploy is logged, and offers first-deployment recovery rather than a rollback command", () => {
     const fixture = deployFixture();
     const result = runScript(fixture.sb, "deploy.sh", deployArgs(fixture), { STUB_UP_EXIT: "1" });
@@ -335,6 +346,55 @@ describe("rollback.sh restore-target guards", () => {
     const result = runScript(sb, "rollback.sh", rollbackArgs(sb, `${sb.root}/absent.env`));
     assert.equal(result.status, 1);
     assert.match(result.stderr, /rollback target not found/);
+    assert.deepEqual(stubCalls(sb), []);
+  });
+
+  it("removes orphaned docs when a historical target omits docs keys, despite inherited docs variables", () => {
+    const sb = makeSandbox({ replace: ROLLBACK_STUBS });
+    const target = writeRelease(sb, "historical.env", {
+      POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH,
+    });
+    writeFileSync(target, readFileSync(target, "utf8").replace(/^DOCS_.*\n/gm, ""));
+    const result = runScript(sb, "rollback.sh", rollbackArgs(sb, target), {
+      DOCS_IMAGE: "open-inspect-docs:current",
+      DOCS_IMAGE_ID: `sha256:${"b".repeat(64)}`,
+      DOCS_LOOPBACK_PORT: "13081",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const compose = composeCalls(sb);
+    assert.ok(
+      compose.some((line) => /--profile docs rm -sf docs$/.test(line)),
+      compose.join("\n")
+    );
+    assert.ok(compose.some((line) => isUp(line) && !/--profile docs/.test(line)));
+    assert.ok(stubCalls(sb).some(isSmoke));
+  });
+
+  it("uses the target docs image and ID rather than an inherited current release", () => {
+    const sb = makeSandbox({ replace: ROLLBACK_STUBS });
+    const target = writeRelease(sb, "target.env", {
+      POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH,
+    });
+    const result = runScript(sb, "rollback.sh", rollbackArgs(sb, target), {
+      DOCS_IMAGE: "open-inspect-docs:current",
+      DOCS_IMAGE_ID: `sha256:${"b".repeat(64)}`,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(stubCalls(sb).some((line) => line.includes("open-inspect-docs:test")));
+    assert.ok(composeCalls(sb).some((line) => isUp(line) && /--profile docs/.test(line)));
+  });
+
+  it("rejects incomplete target docs metadata even if the caller exports the missing key", () => {
+    const sb = makeSandbox({ replace: ROLLBACK_STUBS });
+    const target = writeRelease(sb, "partial.env", {
+      POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH,
+    });
+    writeFileSync(target, readFileSync(target, "utf8").replace(/^DOCS_IMAGE_ID=.*\n/m, ""));
+    const result = runScript(sb, "rollback.sh", rollbackArgs(sb, target), {
+      DOCS_IMAGE_ID: `sha256:${"a".repeat(64)}`,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /rollback target docs metadata is incomplete/);
     assert.deepEqual(stubCalls(sb), []);
   });
 
@@ -662,7 +722,13 @@ describe("preflight.sh checks only the sandbox provider it is configured for", (
   const curlCalls = (sb) => stubCalls(sb).filter((line) => line.startsWith("curl "));
 
   /** Runs the real preflight.sh on these control-plane.env and web.env texts; returns the sandbox and its output lines. */
-  function runPreflight({ cp = controlPlane, webEnv = web, env = {} } = {}) {
+  function runPreflight({
+    cp = controlPlane,
+    webEnv = web,
+    env = {},
+    releaseOverrides = {},
+    omitDocs = false,
+  } = {}) {
     const sb = makeSandbox();
     for (const [name, text] of [
       ["control-plane.env", cp],
@@ -671,7 +737,8 @@ describe("preflight.sh checks only the sandbox provider it is configured for", (
       writeFileSync(`${sb.secrets}/${name}`, text);
       chmodSync(`${sb.secrets}/${name}`, 0o600);
     }
-    const release = writeRelease(sb);
+    const release = writeRelease(sb, "release.env", releaseOverrides);
+    if (omitDocs) writeFileSync(release, readFileSync(release, "utf8").replace(/^DOCS_.*\n/gm, ""));
     // The Windows stat shim answers 600 for every path, so the file-mode checks pass there too.
     const result = runScript(
       sb,
@@ -682,8 +749,44 @@ describe("preflight.sh checks only the sandbox provider it is configured for", (
         ...env,
       }
     );
-    return { sb, lines: result.stdout.split("\n") };
+    return { sb, status: result.status, lines: result.stdout.split("\n") };
   }
+
+  it("refuses overlapping live project ports before claiming any port is owned", () => {
+    for (const releaseOverrides of [
+      { WEB_LOOPBACK_PORT: "18787" },
+      { DOCS_LOOPBACK_PORT: "18787" },
+      { DOCS_LOOPBACK_PORT: "13080" },
+    ]) {
+      const { status, lines } = runPreflight({
+        releaseOverrides,
+        env: { STUB_RUNNING: "127.0.0.1:18787->8787/tcp\n127.0.0.1:13080->3000/tcp\n" },
+      });
+      assert.equal(status, 1);
+      assert.ok(
+        lines.includes("FAIL  control plane, web and enabled docs loopback ports must be distinct"),
+        lines.join("\n")
+      );
+      assert.equal(
+        lines.some((line) => /PASS {2}loopback port/.test(line)),
+        false
+      );
+    }
+  });
+
+  it("keeps the docs port optional when an older release omits docs metadata", () => {
+    const { sb, lines } = runPreflight({
+      releaseOverrides: { DOCS_LOOPBACK_PORT: "13080" },
+      omitDocs: true,
+    });
+    assert.equal(
+      lines.some((line) => /loopback ports must be distinct/.test(line)),
+      false
+    );
+    assert.ok(
+      composeCalls(sb).some((line) => / config --quiet$/.test(line) && !/--profile docs/.test(line))
+    );
+  });
 
   it("passes the VPS provider checks with no Modal key, no cap call and no Modal line", () => {
     const { sb, lines } = runPreflight();

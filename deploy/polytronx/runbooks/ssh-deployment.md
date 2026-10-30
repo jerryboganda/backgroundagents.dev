@@ -164,7 +164,7 @@ variables, and each is protected on its own terms.
 | Kind     | Name                   | Value                                                   |
 | -------- | ---------------------- | ------------------------------------------------------- |
 | Secret   | `SSH_PRIVATE_KEY`      | The whole contents of `~/.ssh/bg_dashboard_ci`          |
-| Variable | `SSH_HOST`             | The dashboard VPS address or name                       |
+| Variable | `SSH_HOST`             | `185.252.233.186` (dashboard production VPS)            |
 | Variable | `SSH_USER`             | `deploy`                                                |
 | Variable | `SSH_PORT`             | The SSH port, usually `22`                              |
 | Variable | `SSH_KNOWN_HOSTS`      | The contents of `bg_dashboard_known_hosts`              |
@@ -329,9 +329,11 @@ The dashboard host:
    `source.bak-<timestamp>`.
 2. Replays the free models the two-hourly sync added on the host, so a release from the repository
    keeps them.
-3. Pulls the pinned third-party images that are missing, and builds the control-plane and web images
-   from the tree, tagged with the revision.
-4. Records the new images and their IDs in `state/release.env`.
+3. Pulls the pinned third-party images that are missing, and builds the control-plane, web and docs
+   images from the tree, tagged with the revision.
+4. Records the new images and their IDs in `state/release.env`. Historical releases without docs
+   metadata continue to render and restart the original stack; no release metadata migration is
+   needed.
 5. Runs `preflight.sh`. Any FAIL stops here and puts the previous release file back.
 6. Runs `deploy.sh`: the project lock, an encrypted backup of the persistent state, the edge
    network, `up --wait --pull never`, and `smoke.sh`.
@@ -347,6 +349,11 @@ target on both hosts.
 
 The deployment is a manual production change. Review the diff of the commit the run deploys before
 it starts, and watch the run.
+
+The docs container is reachable on the host at `127.0.0.1:13081` by default and from Nginx Proxy
+Manager as `polytronx-openinspect-docs:3000` on `polytronx-edge`. Configure the separate
+`docs.backgroundagents.dev` route and DNS record using `templates/npm-edge-proxy.md`. The DNS record
+must target the dashboard host `185.252.233.186`.
 
 ### The runner has to be able to reach the host
 

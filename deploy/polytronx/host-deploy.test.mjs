@@ -85,4 +85,17 @@ describe("the host deployment scripts", () => {
     assert.doesNotMatch(executor, /state\/release\.env/);
     assert.match(dashboard, /\$STATE_DIR\/release\.env/);
   });
+
+  it("builds and records the docs image alongside the dashboard", () => {
+    assert.match(dashboard, /docker build -q -f packages\/docs\/Dockerfile/);
+    assert.match(dashboard, /set_release_value DOCS_IMAGE /);
+    assert.match(dashboard, /set_release_value DOCS_IMAGE_ID /);
+    assert.doesNotMatch(dashboard, /prepare_prior_docs_release/);
+  });
+
+  it("does not mutate last-good on preflight-only or preflight failure", () => {
+    assert.doesNotMatch(dashboard, /set_release_value DOCS_IMAGE [^\n]*\$prior/);
+    assert.doesNotMatch(dashboard, /prepare_prior_docs_release/);
+    assert.match(dashboard, /if \[ "\$DEPLOY" != 1 \]; then/);
+  });
 });

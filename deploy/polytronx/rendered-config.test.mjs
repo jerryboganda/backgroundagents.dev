@@ -19,6 +19,12 @@ function productionRender() {
         ports: [{ host_ip: "127.0.0.1", published: "13080", target: 3000 }],
         networks: { edge: { aliases: ["polytronx-openinspect-web"] }, backend: {} },
       },
+      docs: {
+        image: "open-inspect-docs:test",
+        pull_policy: "never",
+        ports: [{ host_ip: "127.0.0.1", published: "13081", target: 3000 }],
+        networks: { edge: { aliases: ["polytronx-openinspect-docs"] } },
+      },
       litestream: {
         image: "litestream/litestream:test",
         pull_policy: "never",
@@ -51,6 +57,11 @@ function rehearsalRender() {
         image: "open-inspect-web:test",
         pull_policy: "never",
         networks: { edge: {}, backend: {} },
+      },
+      docs: {
+        image: "open-inspect-docs:test",
+        pull_policy: "never",
+        networks: { edge: {} },
       },
       litestream: {
         image: "litestream/litestream:test",
@@ -88,6 +99,16 @@ describe("production render", () => {
     const config = productionRender();
     config.services.app.ports[0].host_ip = "0.0.0.0";
     assert.deepEqual(productionProblems(config), ["app publishes a port on 0.0.0.0"]);
+  });
+
+  it("refuses a docs route bound to all interfaces or missing its edge alias", () => {
+    const config = productionRender();
+    config.services.docs.ports[0].host_ip = "0.0.0.0";
+    config.services.docs.networks.edge.aliases = [];
+    assert.deepEqual(productionProblems(config), [
+      "docs publishes a port on 0.0.0.0",
+      "docs lacks the edge network alias polytronx-openinspect-docs",
+    ]);
   });
 
   it("flags a published object store and an object store on the edge network", () => {
@@ -129,6 +150,12 @@ describe("rehearsal render", () => {
     assert.deepEqual(rehearsalProblems(config), ["app publishes a port in the rehearsal"]);
   });
 
+  it("refuses a published docs port in rehearsal", () => {
+    const config = rehearsalRender();
+    config.services.docs.ports = [{ host_ip: "127.0.0.1", published: "13081", target: 3000 }];
+    assert.deepEqual(rehearsalProblems(config), ["docs publishes a port in the rehearsal"]);
+  });
+
   it("flags a network that can route outside the host", () => {
     const config = rehearsalRender();
     config.networks.egress = { driver: "bridge" };
@@ -144,6 +171,7 @@ describe("rehearsal render", () => {
     assert.deepEqual(rehearsalProblems(config), [
       "app joins the live edge network",
       "web joins the live edge network",
+      "docs joins the live edge network",
     ]);
   });
 

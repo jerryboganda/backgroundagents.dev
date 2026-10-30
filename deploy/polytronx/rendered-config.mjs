@@ -15,6 +15,7 @@ const LOOPBACK = "127.0.0.1";
 const EDGE_ALIASES = {
   app: "polytronx-openinspect-app",
   web: "polytronx-openinspect-web",
+  docs: "polytronx-openinspect-docs",
 };
 
 function portsOf(service) {

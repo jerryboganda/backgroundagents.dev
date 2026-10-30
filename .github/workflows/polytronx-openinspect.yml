@@ -3,8 +3,8 @@
 # to a registry, and never touches a host: the artifact is the hand-off.
 #
 # Artifact polytronx-release (kept 7 days): release-manifest.env,
-# control-plane.tar, web.tar, executor.tar and SHA256SUMS. runbooks/deploy-and-rollback.md
-# describes how the operator transfers and loads the first two; runbooks/executor-host.md
+# control-plane.tar, web.tar, docs.tar, executor.tar and SHA256SUMS. runbooks/deploy-and-rollback.md
+# describes how the operator transfers and loads the first three; runbooks/executor-host.md
 # covers executor.tar.
 # Action refs are full commit SHAs, each with the release tag it was resolved from
 # (git ls-remote of the official repository, 2026-10-16).
@@ -51,7 +51,7 @@ jobs:
           # The SSH deployment workflows, the SSH setup action they share, and the scripts that verify and ship over SSH are listed by exact path too.
           # The legacy drift the overlay already owns is listed by exact path as well: the upstream CI workflows this overlay removed, the session and role files it changed, and the model catalog it maintains. Every one of them is a committed file, so the check stops new paths rather than old ones.
           # The root .env.example task template and the root .gitattributes are admitted by exact name only.
-          allowed='^(deploy/polytronx/|\.github/workflows/polytronx-openinspect\.yml$|packages/web/Dockerfile(\.dockerignore)?$|packages/web/src/components/secrets-editor\.tsx$|packages/web/src/components/secrets-editor\.test\.ts$|packages/vps-executor/|scripts/bootstrap-node-owner(\.test)?\.ts$|scripts/tsconfig\.bootstrap\.json$|packages/modal-infra/src/sandbox/(build_session|capacity|launch|launch_policy|vm_recovery)\.py$|packages/modal-infra/src/web_api\.py$|packages/modal-infra/tests/test_sandbox_capacity\.py$|packages/modal-infra/tests/test_docker_launch\.py$|packages/control-plane/src/(node/config|types)\.ts$|packages/control-plane/src/sandbox/(provider|provider-factory|provider-factory\.test)\.ts$|packages/control-plane/src/sandbox/lifecycle/(manager|vm-startup-reconciliation|sandbox-id\.test)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations|manager-admission)\.test\.ts$|packages/control-plane/src/sandbox/providers/vps-provider(\.test)?\.ts$|packages/control-plane/src/sandbox/providers/pending-vm-reference\.ts$|packages/control-plane/src/sandbox/admission/vps-reconcile(\.test)?\.ts$|packages/control-plane/src/db/secrets-validation(\.test)?\.ts$|packages/control-plane/src/sandbox/sandbox-env\.ts$|packages/control-plane/src/scheduled-jobs(\.test)?\.ts$|packages/control-plane/src/session/components(-admission\.test)?\.ts$|packages/control-plane/src/session/sandbox-shutdown(\.test)?\.ts$|packages/control-plane/test/integration/cleanup\.ts$|packages/control-plane/src/db/environment-secrets(\.test)?\.ts$|packages/control-plane/src/db/team-secrets\.ts$|packages/control-plane/src/routes/environment-secrets\.ts$|packages/control-plane/src/routes/secrets\.ts$|packages/control-plane/src/routes/secrets\.repository-grants\.test\.ts$|packages/control-plane/test/integration/environments-routes\.test\.ts$|packages/control-plane/test/integration/global-secrets\.test\.ts$|packages/control-plane/test/integration/team-secrets-routes\.test\.ts$|packages/control-plane/test/integration/team-secrets-store\.test\.ts$|packages/shared/src/types/integrations\.ts$|terraform/d1/migrations/0089_sandbox_admission_reservations\.sql$|terraform/d1/migrations/0090_sandbox_admission_relinquished\.sql$|package-lock\.json$|package\.json$|AGENTS\.md$|\.gitignore$|\.env\.example$|\.gitattributes$|\.github/workflows/sandbox-images\.yml$|\.github/workflows/ssh-deploy-(dashboard|executor)\.yml$|\.github/actions/ssh-setup/action\.yml$|\.github/CODEOWNERS$|scripts/ship-(dashboard|executor)\.sh$|scripts/ssh-verify(\.test)?\.mjs$|scripts/ssh-deploy-contract\.test\.mjs$|packages/sandbox-images/(Dockerfile\.vps|README\.md|targets\.json|install/filesystem\.sh|vps/entrypoint\.sh|src/sandbox_images/(bundle|native)\.py|tests/(test_bundle|test_verification|test_vps_seed)\.py|verify/smoke_test\.py)$|packages/sandbox-runtime/(src/sandbox_runtime/(entrypoint|session_context_start)\.py|tests/test_session_context_start\.py)$|\.github/workflows/polytronx-release-integration\.yml$|\.github/workflows/cross-harness-child-ci\.yml$|\.github/workflows/vps-workspace-contract\.yml$|\.github/workflows/vps-edge-contract\.yml$|\.github/workflows/polytronx-overlay-contract\.yml$|scripts/ship-executor\.sh$|docs/AGENT_ROLES\.md$|docs/HOW_IT_WORKS\.md$|packages/control-plane/src/agent-role-profiles\.test\.ts$|packages/control-plane/src/agent-role-profiles\.ts$|packages/control-plane/src/harness-admission\.test\.ts$|packages/control-plane/src/harness-admission\.ts$|packages/control-plane/src/router\.spawn-child\.test\.ts$|packages/control-plane/src/routes/session-child-spawn\.ts$|packages/docs/content/docs/models/agent-harnesses\.mdx$|packages/docs/content/docs/sessions/child-sessions\.mdx$|packages/sandbox-runtime/src/sandbox_runtime/harness/tools\.py$|packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child\.js$|packages/sandbox-runtime/tests/test_spawn_child_tool\.py$|packages/sandbox-runtime/tests/test_tools\.py$|packages/shared/src/types/boundary-schemas\.test\.ts$|packages/shared/src/types/session-api\.ts$|\.github/workflows/(polytronx-openinspect|dashboard-ssh-readiness|executor-ssh-readiness|dual-vps-ssh-contracts)\.yml$|packages/slack-bot/src/inline-flags\.ts$|packages/sandbox-runtime/src/sandbox_runtime/(opencode_server\.py|harness/opencode_stream\.py)$|packages/sandbox-runtime/tests/(test_reasoning_config|test_bridge_message_tracking)\.py$|packages/web/src/components/model-reasoning-selector\.test\.tsx$|scripts/workflow-yaml-contract\.test\.mjs$)'
+          allowed='^(deploy/polytronx/|\.github/workflows/polytronx-openinspect\.yml$|packages/web/Dockerfile(\.dockerignore)?$|packages/docs/(Dockerfile(\.dockerignore)?|next\.config\.mjs|README\.md)$|\.github/workflows/deploy-docs\.yml$|packages/web/src/components/secrets-editor\.tsx$|packages/web/src/components/secrets-editor\.test\.ts$|packages/vps-executor/|scripts/bootstrap-node-owner(\.test)?\.ts$|scripts/tsconfig\.bootstrap\.json$|packages/modal-infra/src/sandbox/(build_session|capacity|launch|launch_policy|vm_recovery)\.py$|packages/modal-infra/src/web_api\.py$|packages/modal-infra/tests/test_sandbox_capacity\.py$|packages/modal-infra/tests/test_docker_launch\.py$|packages/control-plane/src/(node/config|types)\.ts$|packages/control-plane/src/sandbox/(provider|provider-factory|provider-factory\.test)\.ts$|packages/control-plane/src/sandbox/lifecycle/(manager|vm-startup-reconciliation|sandbox-id\.test)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations)\.ts$|packages/control-plane/src/sandbox/admission/(gate|reservations|manager-admission)\.test\.ts$|packages/control-plane/src/sandbox/providers/vps-provider(\.test)?\.ts$|packages/control-plane/src/sandbox/providers/pending-vm-reference\.ts$|packages/control-plane/src/sandbox/admission/vps-reconcile(\.test)?\.ts$|packages/control-plane/src/db/secrets-validation(\.test)?\.ts$|packages/control-plane/src/sandbox/sandbox-env\.ts$|packages/control-plane/src/scheduled-jobs(\.test)?\.ts$|packages/control-plane/src/session/components(-admission\.test)?\.ts$|packages/control-plane/src/session/sandbox-shutdown(\.test)?\.ts$|packages/control-plane/test/integration/cleanup\.ts$|packages/control-plane/src/db/environment-secrets(\.test)?\.ts$|packages/control-plane/src/db/team-secrets\.ts$|packages/control-plane/src/routes/environment-secrets\.ts$|packages/control-plane/src/routes/secrets\.ts$|packages/control-plane/src/routes/secrets\.repository-grants\.test\.ts$|packages/control-plane/test/integration/environments-routes\.test\.ts$|packages/control-plane/test/integration/global-secrets\.test\.ts$|packages/control-plane/test/integration/team-secrets-routes\.test\.ts$|packages/control-plane/test/integration/team-secrets-store\.test\.ts$|packages/shared/src/types/integrations\.ts$|terraform/d1/migrations/0089_sandbox_admission_reservations\.sql$|terraform/d1/migrations/0090_sandbox_admission_relinquished\.sql$|package-lock\.json$|package\.json$|AGENTS\.md$|\.gitignore$|\.env\.example$|\.gitattributes$|\.github/workflows/sandbox-images\.yml$|\.github/workflows/ssh-deploy-(dashboard|executor)\.yml$|\.github/actions/ssh-setup/action\.yml$|\.github/CODEOWNERS$|scripts/ship-(dashboard|executor)\.sh$|scripts/ssh-verify(\.test)?\.mjs$|scripts/ssh-deploy-contract\.test\.mjs$|packages/sandbox-images/(Dockerfile\.vps|README\.md|targets\.json|install/filesystem\.sh|vps/entrypoint\.sh|src/sandbox_images/(bundle|native)\.py|tests/(test_bundle|test_verification|test_vps_seed)\.py|verify/smoke_test\.py)$|packages/sandbox-runtime/(src/sandbox_runtime/(entrypoint|session_context_start)\.py|tests/test_session_context_start\.py)$|\.github/workflows/polytronx-release-integration\.yml$|\.github/workflows/cross-harness-child-ci\.yml$|\.github/workflows/vps-workspace-contract\.yml$|\.github/workflows/vps-edge-contract\.yml$|\.github/workflows/polytronx-overlay-contract\.yml$|scripts/ship-executor\.sh$|docs/AGENT_ROLES\.md$|docs/HOW_IT_WORKS\.md$|packages/control-plane/src/agent-role-profiles\.test\.ts$|packages/control-plane/src/agent-role-profiles\.ts$|packages/control-plane/src/harness-admission\.test\.ts$|packages/control-plane/src/harness-admission\.ts$|packages/control-plane/src/router\.spawn-child\.test\.ts$|packages/control-plane/src/routes/session-child-spawn\.ts$|packages/docs/content/docs/models/agent-harnesses\.mdx$|packages/docs/content/docs/sessions/child-sessions\.mdx$|packages/sandbox-runtime/src/sandbox_runtime/harness/tools\.py$|packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child\.js$|packages/sandbox-runtime/tests/test_spawn_child_tool\.py$|packages/sandbox-runtime/tests/test_tools\.py$|packages/shared/src/types/boundary-schemas\.test\.ts$|packages/shared/src/types/session-api\.ts$|\.github/workflows/(polytronx-openinspect|dashboard-ssh-readiness|executor-ssh-readiness|dual-vps-ssh-contracts)\.yml$|packages/slack-bot/src/inline-flags\.ts$|packages/sandbox-runtime/src/sandbox_runtime/(opencode_server\.py|harness/opencode_stream\.py)$|packages/sandbox-runtime/tests/(test_reasoning_config|test_bridge_message_tracking)\.py$|packages/web/src/components/model-reasoning-selector\.test\.tsx$|scripts/workflow-yaml-contract\.test\.mjs$)'
           changed="$(git diff --name-only --no-renames "$pin" HEAD)"
           # Credential paths are refused before the broad prefixes above can admit them: nested
           # .env and .env.* files, every other *.env file (the exact deploy/polytronx/pins.env and the
@@ -241,22 +241,24 @@ jobs:
           cat >"$work/release.env" <<EOF
           CONTROL_PLANE_IMAGE=open-inspect-control-plane:render-check
           WEB_IMAGE=open-inspect-web:render-check
+          DOCS_IMAGE=open-inspect-docs:render-check
           POLYTRONX_SECRETS_DIR=$work/secrets
           POLYTRONX_EXECUTOR_CA_FILE=$work/executor-edge-ca.crt
           POLYTRONX_SOURCE_DIR=$GITHUB_WORKSPACE
           POLYTRONX_EDGE_NETWORK=polytronx-edge
           CONTROL_PLANE_LOOPBACK_PORT=18787
           WEB_LOOPBACK_PORT=13080
+          DOCS_LOOPBACK_PORT=13081
           OBJECT_STORE_BUCKET=openinspect-media
           LITESTREAM_BUCKET=openinspect-backups
           EOF
-          docker compose -p polytronx-openinspect --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml config --quiet
-          docker compose -p polytronx-openinspect-rehearsal --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect-rehearsal --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml -f deploy/polytronx/compose.rehearsal.yml \
             config --quiet
           grep -v '^CONTROL_PLANE_IMAGE=' "$work/release.env" >"$work/release-no-image.env"
-          if docker compose -p polytronx-openinspect --env-file "$work/release-no-image.env" \
+          if docker compose -p polytronx-openinspect --profile docs --env-file "$work/release-no-image.env" \
             -f deploy/polytronx/compose.production.yml config --quiet 2>"$work/err.txt"; then
             echo "compose rendered without CONTROL_PLANE_IMAGE; the deployment would not fail closed"
             exit 1
@@ -268,7 +270,7 @@ jobs:
           fi
           echo "fail-closed: a missing CONTROL_PLANE_IMAGE stops the render"
           grep -v '^POLYTRONX_EXECUTOR_CA_FILE=' "$work/release.env" >"$work/release-no-ca.env"
-          if docker compose -p polytronx-openinspect --env-file "$work/release-no-ca.env" \
+          if docker compose -p polytronx-openinspect --profile docs --env-file "$work/release-no-ca.env" \
             -f deploy/polytronx/compose.production.yml config --quiet 2>"$work/ca-err.txt"; then
             echo "compose rendered without POLYTRONX_EXECUTOR_CA_FILE; the executor CA would not be required"
             exit 1
@@ -287,9 +289,9 @@ jobs:
         run: |
           set -euo pipefail
           work="$RUNNER_TEMP/render"
-          docker compose -p polytronx-openinspect --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml config --format json >"$work/production.json"
-          docker compose -p polytronx-openinspect-rehearsal --env-file "$work/release.env" \
+          docker compose -p polytronx-openinspect-rehearsal --profile docs --env-file "$work/release.env" \
             -f deploy/polytronx/compose.production.yml -f deploy/polytronx/compose.rehearsal.yml \
             config --format json >"$work/rehearsal.json"
           node deploy/polytronx/rendered-config.mjs production "$work/production.json"
@@ -362,7 +364,7 @@ jobs:
           echo "fail-closed: a missing VPS_EXECUTOR_CONTROL_PLANE_URL stops the render"
 
   images:
-    name: Build, smoke and export all three images
+    name: Build, smoke and export all four images
     needs: [verify, modal-linux, compose-render, vps-executor]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -459,6 +461,41 @@ jobs:
           docker logs web-smoke || true
           exit 1
 
+      - name: Build the docs image
+        run: |
+          set -euo pipefail
+          docker buildx build --load \
+            -f packages/docs/Dockerfile \
+            --build-arg NODE_IMAGE="$NODE_IMAGE" \
+            --label "io.polytronx.overlay-revision=$OVERLAY_REVISION" \
+            --label "io.polytronx.node-image=$NODE_IMAGE" \
+            -t "open-inspect-docs:$OVERLAY_REVISION" .
+          id="$(docker image inspect -f '{{.Id}}' "open-inspect-docs:$OVERLAY_REVISION")"
+          echo "DOCS_IMAGE_ID=$id" >>"$GITHUB_ENV"
+          echo "docs image $id"
+
+      - name: Check the docs image layout and HTTP response
+        run: |
+          set -euo pipefail
+          image="open-inspect-docs:$OVERLAY_REVISION"
+          [ "$(docker image inspect -f '{{.Config.User}}' "$image")" = node ] ||
+            { echo "docs image does not run as node"; exit 1; }
+          docker run --rm --entrypoint sh "$image" -c \
+            'test -f packages/docs/server.js && test -d packages/docs/.next/static && test -d packages/docs/public'
+          docker run -d --name docs-smoke -p 127.0.0.1:13081:3000 "$image" >/dev/null
+          code=000
+          for _ in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13081/ || true)"
+            if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+              echo "docs answered HTTP $code"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "docs did not answer successfully (last: $code)"
+          docker logs docs-smoke || true
+          exit 1
+
       - name: Build the VPS executor image
         # Built from its own directory, so the context is the package alone. The vps-executor job
         # checks the Dockerfile's base image against NODE_IMAGE.
@@ -511,10 +548,11 @@ jobs:
           mkdir -p release
           docker save -o release/control-plane.tar "open-inspect-control-plane:$OVERLAY_REVISION"
           docker save -o release/web.tar "open-inspect-web:$OVERLAY_REVISION"
+          docker save -o release/docs.tar "open-inspect-docs:$OVERLAY_REVISION"
           docker save -o release/executor.tar "open-inspect-vps-executor:$OVERLAY_REVISION"
           # Each archive must carry the image ID it is recorded with. The listing
           # goes to a file so grep -q cannot close a pipe early under pipefail.
-          for pair in "control-plane.tar:$CONTROL_PLANE_IMAGE_ID" "web.tar:$WEB_IMAGE_ID" "executor.tar:$EXECUTOR_IMAGE_ID"; do
+          for pair in "control-plane.tar:$CONTROL_PLANE_IMAGE_ID" "web.tar:$WEB_IMAGE_ID" "docs.tar:$DOCS_IMAGE_ID" "executor.tar:$EXECUTOR_IMAGE_ID"; do
             file="${pair%%:*}"
             hex="${pair#*:}"
             hex="${hex#sha256:}"
@@ -526,7 +564,7 @@ jobs:
         run: |
           set -euo pipefail
           cat >release/release-manifest.env <<EOF
-          # Image and revision values. The CONTROL_PLANE and WEB lines go to state/release.env on
+          # Image and revision values. The CONTROL_PLANE, WEB and DOCS lines go to state/release.env on
           # the dashboard host; the EXECUTOR lines go to executor-release.env on the executor host.
           # Site values (paths, ports, buckets, addresses) stay with the operator. Nothing here is a secret.
           CI_RUN_ID=$GITHUB_RUN_ID
@@ -538,10 +576,12 @@ jobs:
           CONTROL_PLANE_IMAGE_ID=$CONTROL_PLANE_IMAGE_ID
           WEB_IMAGE=open-inspect-web:$OVERLAY_REVISION
           WEB_IMAGE_ID=$WEB_IMAGE_ID
+          DOCS_IMAGE=open-inspect-docs:$OVERLAY_REVISION
+          DOCS_IMAGE_ID=$DOCS_IMAGE_ID
           EXECUTOR_IMAGE=open-inspect-vps-executor:$OVERLAY_REVISION
           EXECUTOR_IMAGE_ID=$EXECUTOR_IMAGE_ID
           EOF
-          (cd release && sha256sum control-plane.tar web.tar executor.tar >SHA256SUMS && sha256sum -c SHA256SUMS)
+          (cd release && sha256sum control-plane.tar web.tar docs.tar executor.tar >SHA256SUMS && sha256sum -c SHA256SUMS)
           cat release/release-manifest.env
 
       - name: Upload the release
@@ -564,6 +604,10 @@ jobs:
       - name: Remove the web smoke container
         if: always()
         run: docker rm -f web-smoke >/dev/null 2>&1 || true
+
+      - name: Remove the docs smoke container
+        if: always()
+        run: docker rm -f docs-smoke >/dev/null 2>&1 || true
 
       - name: Remove the executor smoke container
         if: always()

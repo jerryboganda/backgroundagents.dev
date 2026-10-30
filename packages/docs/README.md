@@ -67,13 +67,24 @@ representation of every page.
 
 ## Production deployment
 
-Docs deployment is manual. After `CI (TypeScript)` is green on `main`, run the `Deploy Docs`
-workflow from the Actions tab (or `gh workflow run deploy-docs.yml --ref main`). It only runs for
-`main` and deploys the commit at the tip of `main` to a dedicated Vercel project. Merging docs
-changes does not publish them on its own, and a run that is missing credentials or targets another
-branch fails instead of reporting a deployment it did not make.
+Production docs are shipped on the dashboard VPS (`185.252.233.186`) alongside the web app by the
+manual **Deploy the dashboard over SSH** workflow (`ssh-deploy-dashboard.yml`). Once the
+`dashboard-production` environment and host prerequisites in
+`deploy/polytronx/runbooks/ssh-deployment.md` are verified, run the workflow on `main` without
+`deploy` first to inspect preflight, then explicitly set `deploy: true` for the reviewed release.
+The workflow builds and verifies a dedicated docs image from that commit. The docs container listens
+on `127.0.0.1:13081` and on the `polytronx-edge` network as `polytronx-openinspect-docs:3000`.
+Configure the separate Nginx Proxy Manager hostname `docs.backgroundagents.dev` per
+`deploy/polytronx/templates/npm-edge-proxy.md` and point its DNS to the dashboard VPS. Merging
+changes alone never publishes them. No Vercel account, project, API token, Terraform CLI or tfvars
+are required for this SSH deployment path.
 
-### One-time setup
+### Optional Vercel hosting
+
+The separate `Deploy Docs to Vercel (optional)` workflow (`deploy-docs.yml`) remains for users who
+independently choose Vercel hosting. It is not part of the VPS release.
+
+#### Vercel-only one-time setup
 
 The Vercel project is Terraform-managed, like the web app's. Set in
 `terraform/environments/production`:

@@ -46,7 +46,9 @@ fail() {
 service_rows="$(docker ps --filter "label=com.docker.compose.project=$LIVE_PROJECT" \
   --format '{{.Label "com.docker.compose.service"}}|{{.Status}}|{{.Ports}}' || true)"
 
-for service in app web object-store; do
+services=(app web object-store)
+[ -z "${DOCS_IMAGE:-}" ] || services+=(docs)
+for service in "${services[@]}"; do
   row="$(grep "^${service}|" <<<"$service_rows" || true)"
   if [[ "$row" == *"(healthy)"* ]]; then
     pass "$service is healthy"
@@ -83,6 +85,13 @@ case "$web_code" in
   2?? | 3?? | 401 | 403) pass "web answers on loopback (HTTP $web_code)" ;;
   *) fail "web did not answer on loopback (HTTP ${web_code:-none})" ;;
 esac
+if [ -n "${DOCS_IMAGE:-}" ]; then
+  docs_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:${DOCS_LOOPBACK_PORT}/" || true)"
+  case "$docs_code" in
+    2??) pass "docs answers on loopback (HTTP $docs_code)" ;;
+    *) fail "docs did not answer on loopback (HTTP ${docs_code:-none})" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # Configuration and resource limits, read from container metadata.

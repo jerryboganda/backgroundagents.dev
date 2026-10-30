@@ -92,9 +92,12 @@ const RELEASE_DEFAULTS = {
   CONTROL_PLANE_IMAGE_ID: SAMPLE_ID,
   WEB_IMAGE: "open-inspect-web:test",
   WEB_IMAGE_ID: SAMPLE_ID,
+  DOCS_IMAGE: "open-inspect-docs:test",
+  DOCS_IMAGE_ID: SAMPLE_ID,
   POLYTRONX_EDGE_NETWORK: "polytronx-edge",
   CONTROL_PLANE_LOOPBACK_PORT: "18787",
   WEB_LOOPBACK_PORT: "13080",
+  DOCS_LOOPBACK_PORT: "13081",
   OBJECT_STORE_BUCKET: "openinspect-media",
   LITESTREAM_BUCKET: "openinspect-backups",
 };

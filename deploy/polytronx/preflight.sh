@@ -100,6 +100,10 @@ else
   fail "OPEN_INSPECT_REVISION must equal UPSTREAM_REVISION in pins.env"
 fi
 
+if [ -n "${DOCS_IMAGE:-}" ] || [ -n "${DOCS_IMAGE_ID:-}" ] || [ -n "${DOCS_LOOPBACK_PORT:-}" ]; then
+  [ -n "${DOCS_IMAGE:-}" ] && [ -n "${DOCS_IMAGE_ID:-}" ] && [ -n "${DOCS_LOOPBACK_PORT:-}" ] ||
+    fail "docs release metadata is incomplete"
+fi
 for pair in CONTROL_PLANE WEB; do
   ref_var="${pair}_IMAGE"
   id_var="${pair}_IMAGE_ID"
@@ -117,6 +121,12 @@ for pair in CONTROL_PLANE WEB; do
     fail "$pair image is not on this host; load the verified archive before deploying"
   fi
 done
+if [ -n "${DOCS_IMAGE:-}" ]; then
+  actual="$(docker image inspect -f '{{.Id}}' "$DOCS_IMAGE" 2>/dev/null || true)"
+  if ! is_image_id "${DOCS_IMAGE_ID:-}" || [ "$actual" != "$DOCS_IMAGE_ID" ]; then
+    fail "DOCS image is missing or differs from its recorded ID"
+  fi
+fi
 
 third_party_problem="$(third_party_image_problem)"
 if [ -z "$third_party_problem" ]; then
@@ -265,15 +275,24 @@ fi
 # Ports, networks and the existing estate. Read-only: nothing is created here.
 # ---------------------------------------------------------------------------
 live_ports="$(docker ps --filter "label=com.docker.compose.project=$LIVE_PROJECT" --format '{{.Ports}}' 2>/dev/null || true)"
-for port in "$CONTROL_PLANE_LOOPBACK_PORT" "$WEB_LOOPBACK_PORT"; do
-  if [[ "$live_ports" == *"127.0.0.1:$port->"* ]]; then
-    pass "loopback port $port is held by this project (re-deploy)"
-  elif port_in_use "$port"; then
-    fail "loopback port $port is in use by another service; choose a free one in release.env, do not stop that service"
-  else
-    pass "loopback port $port is free"
-  fi
-done
+ports=("$CONTROL_PLANE_LOOPBACK_PORT" "$WEB_LOOPBACK_PORT")
+[ -z "${DOCS_IMAGE:-}" ] || ports+=("$DOCS_LOOPBACK_PORT")
+if [ "$CONTROL_PLANE_LOOPBACK_PORT" = "$WEB_LOOPBACK_PORT" ] ||
+  { [ -n "${DOCS_IMAGE:-}" ] &&
+    { [ "$DOCS_LOOPBACK_PORT" = "$CONTROL_PLANE_LOOPBACK_PORT" ] ||
+      [ "$DOCS_LOOPBACK_PORT" = "$WEB_LOOPBACK_PORT" ]; }; }; then
+  fail "control plane, web and enabled docs loopback ports must be distinct"
+else
+  for port in "${ports[@]}"; do
+    if [[ "$live_ports" == *"127.0.0.1:$port->"* ]]; then
+      pass "loopback port $port is held by this project (re-deploy)"
+    elif port_in_use "$port"; then
+      fail "loopback port $port is in use by another service; choose a free one in release.env, do not stop that service"
+    else
+      pass "loopback port $port is free"
+    fi
+  done
+fi
 
 if docker network inspect "$POLYTRONX_EDGE_NETWORK" >/dev/null 2>&1; then
   pass "edge network $POLYTRONX_EDGE_NETWORK exists"

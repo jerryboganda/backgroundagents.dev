@@ -165,8 +165,9 @@ migrations, Modal data plane, or a Cloudflare-hosted web app, review a Terraform
 `terraform apply` manually from `terraform/environments/production` with production credentials and
 the remote state backend configured. See `terraform/README.md` for the manual procedure.
 
-Vercel web deployments depend on the separately configured Vercel integration. Public docs require
-the manually triggered `Deploy Docs` workflow on `main` and its dedicated project secrets.
+Vercel web deployments remain optional. VPS production (including public docs) uses the manual
+`Deploy the dashboard over SSH` workflow on `main` with the `dashboard-production` environment; see
+`packages/docs/README.md` and `deploy/polytronx/runbooks/ssh-deployment.md`.
 
 ## Further Reading
 

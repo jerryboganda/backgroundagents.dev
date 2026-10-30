@@ -1,0 +1,15 @@
+# BuildKit uses this file instead of the root .dockerignore.
+*
+!package.json
+!package-lock.json
+!packages/docs/
+!packages/docs/**
+**/node_modules/
+**/.next/
+**/.source/
+**/coverage/
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/.dev.vars
+**/*.pem

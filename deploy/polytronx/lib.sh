@@ -80,7 +80,11 @@ is_revision() {
 
 # Compose for the live project, always with the pinned file and the loaded release.
 live_compose() {
-  docker compose -p "$LIVE_PROJECT" --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" "$@"
+  local profile=()
+  if [ -n "$(env_value DOCS_IMAGE "$RELEASE_FILE")" ]; then
+    profile=(--profile docs)
+  fi
+  docker compose -p "$LIVE_PROJECT" --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" "${profile[@]}" "$@"
 }
 
 # Prints a description of the first problem with a secrets file, or nothing.

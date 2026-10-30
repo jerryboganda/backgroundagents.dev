@@ -10,6 +10,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Bound concurrent jsdom and ESLint work on Windows to avoid scheduler stalls.
+    maxWorkers: process.platform === "win32" ? 4 : undefined,
     execArgv: ["--no-experimental-webstorage"],
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],

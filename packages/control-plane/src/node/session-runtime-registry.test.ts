@@ -19,6 +19,9 @@ import {
 } from "./session-runtime-registry";
 import { createFileSessionStoreProvider, type SessionStoreProvider } from "./session-store";
 
+// File-backed SQLite and socket tests may exceed 5s on loaded Windows hosts.
+vi.setConfig({ testTimeout: process.platform === "win32" ? 20_000 : 5_000 });
+
 const GC_CHILD = "SESSION_REGISTRY_GC_CHILD";
 const GC_CHILD_TIMEOUT_MS = 60_000;
 /** The one test the child is spawned to run; everything else in this file would

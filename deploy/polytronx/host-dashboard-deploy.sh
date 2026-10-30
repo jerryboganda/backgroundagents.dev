@@ -89,6 +89,8 @@ install_tree() {
     die "the staged tree has no packages/control-plane/Dockerfile"
   [ -f "$staged/packages/web/Dockerfile" ] ||
     die "the staged tree has no packages/web/Dockerfile"
+  [ -f "$staged/packages/docs/Dockerfile" ] ||
+    die "the staged tree has no packages/docs/Dockerfile"
   [ -f "$staged/deploy/polytronx/host-dashboard-deploy.sh" ] ||
     die "the staged tree has no deploy/polytronx/host-dashboard-deploy.sh"
   stamp="$(date -u +%Y%m%dT%H%M%S)"
@@ -160,13 +162,13 @@ replay_model_additions() {
   fi
 }
 
-# Builds both images from the installed tree and records them in the release file. The
+# Builds all three dashboard images from the installed tree and records them in the release file. The
 # tags carry the revision, so an image on this host names the commit it was built from.
 build_images() {
-  local rev ws cp_id web_id p1 p2 failed=0
+  local rev ws cp_id web_id docs_id p1 p2 p3 failed=0
   rev="$(grep -m1 '^UPSTREAM_REVISION=' "$SRC/deploy/polytronx/pins.env" | cut -d= -f2-)"
   ws="$(grep -m1 '^PUBLIC_WS_URL=' "$SRC/deploy/polytronx/pins.env" | cut -d= -f2-)"
-  info "building the control-plane and web images for $REVISION"
+  info "building the control-plane, web and docs images for $REVISION"
   (cd "$SRC" && exec nice docker build -q -f packages/control-plane/Dockerfile \
     --label "io.polytronx.overlay-revision=$REVISION" \
     -t "open-inspect-control-plane:$REVISION" .) \
@@ -179,6 +181,11 @@ build_images() {
     -t "open-inspect-web:$REVISION" .) \
     >/tmp/polytronx-build-web.log 2>&1 &
   p2=$!
+  (cd "$SRC" && exec nice docker build -q -f packages/docs/Dockerfile \
+    --label "io.polytronx.overlay-revision=$REVISION" \
+    -t "open-inspect-docs:$REVISION" .) \
+    >/tmp/polytronx-build-docs.log 2>&1 &
+  p3=$!
   if ! wait "$p1"; then
     warn "the control-plane build failed; the tail of its log follows"
     tail -n 20 /tmp/polytronx-build-control-plane.log
@@ -189,16 +196,27 @@ build_images() {
     tail -n 20 /tmp/polytronx-build-web.log
     failed=1
   fi
+  if ! wait "$p3"; then
+    warn "the docs build failed; the tail of its log follows"
+    tail -n 20 /tmp/polytronx-build-docs.log
+    failed=1
+  fi
   if [ "$failed" = 1 ]; then
     die "the images were not built; the running release is unchanged"
   fi
   cp_id="$(docker image inspect "open-inspect-control-plane:$REVISION" --format '{{.Id}}')"
   web_id="$(docker image inspect "open-inspect-web:$REVISION" --format '{{.Id}}')"
+  docs_id="$(docker image inspect "open-inspect-docs:$REVISION" --format '{{.Id}}')"
   set_release_value OVERLAY_REVISION "$REVISION" "$RELEASE_FILE"
   set_release_value CONTROL_PLANE_IMAGE "open-inspect-control-plane:$REVISION" "$RELEASE_FILE"
   set_release_value CONTROL_PLANE_IMAGE_ID "$cp_id" "$RELEASE_FILE"
   set_release_value WEB_IMAGE "open-inspect-web:$REVISION" "$RELEASE_FILE"
   set_release_value WEB_IMAGE_ID "$web_id" "$RELEASE_FILE"
+  set_release_value DOCS_IMAGE "open-inspect-docs:$REVISION" "$RELEASE_FILE"
+  set_release_value DOCS_IMAGE_ID "$docs_id" "$RELEASE_FILE"
+  if [ -z "$(env_value DOCS_LOOPBACK_PORT "$RELEASE_FILE")" ]; then
+    set_release_value DOCS_LOOPBACK_PORT 13081 "$RELEASE_FILE"
+  fi
   info "the release file names the images of revision $REVISION"
 }
 
