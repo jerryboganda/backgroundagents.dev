@@ -341,6 +341,20 @@ describe("rollback.sh restore-target guards", () => {
     "polytronx-openinspect",
   ];
 
+  it("succeeds when rolling back directly to last-good.env", () => {
+    const sb = makeSandbox({ replace: ROLLBACK_STUBS });
+    const target = writeRelease(sb, "last-good.env", {
+      POLYTRONX_EXECUTOR_CA_FILE: EXECUTOR_CA_PATH,
+    });
+    mkdirSync(sb.state, { recursive: true });
+    copyFileSync(target, `${sb.state}/last-good.env`);
+    const result = runScript(sb, "rollback.sh", rollbackArgs(sb, `${sb.state}/last-good.env`));
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(composeCalls(sb).some(isUp));
+    assert.ok(stubCalls(sb).some(isSmoke));
+    assert.match(readDeployLog(sb), /rollback ok/);
+  });
+
   it("refuses a missing target before any docker call", () => {
     const sb = makeSandbox({ replace: ROLLBACK_STUBS });
     const result = runScript(sb, "rollback.sh", rollbackArgs(sb, `${sb.root}/absent.env`));

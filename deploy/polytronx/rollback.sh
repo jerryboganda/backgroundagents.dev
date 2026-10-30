@@ -96,7 +96,9 @@ if ! live_compose up -d --wait --wait-timeout 420 --pull never; then
 fi
 
 if "$DEPLOY_DIR/smoke.sh" --release "$TARGET"; then
-  cp "$TARGET" "$STATE_DIR/last-good.env"
+  if [ ! "$TARGET" -ef "$STATE_DIR/last-good.env" ]; then
+    cp "$TARGET" "$STATE_DIR/last-good.env"
+  fi
   printf '%s rollback ok revision=%s\n' "$(date -u +%FT%TZ)" "$OPEN_INSPECT_REVISION" >>"$STATE_DIR/deploy-log.txt"
   info "rollback complete and smoke passed"
 else
