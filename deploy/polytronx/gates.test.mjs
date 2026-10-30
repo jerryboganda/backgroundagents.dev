@@ -381,15 +381,16 @@ exit 0
     assert.deepEqual(refused(credentials), credentials);
   });
 
-  it("admits reviewed overlay paths and refuses unrelated checkout changes", () => {
+  it("admits reviewed overlay and pinned drift paths, refuses unrelated checkout changes", () => {
     const approved = [
       "deploy/polytronx/deploy.sh",
       "terraform/d1/migrations/0090_sandbox_admission_relinquished.sql",
+      "terraform/d1/migrations/0095_linear_session_init_recovery.sql",
       "packages/control-plane/src/sandbox/admission/reservations.ts",
     ];
     const unrelated = [
       "packages/web/src/app/unreviewed-change.tsx",
-      "terraform/d1/migrations/0095_linear_session_init_recovery.sql",
+      "terraform/d1/migrations/0095_linear_session_init_recovery.sql.bak",
     ];
     const result = runAdmission(approved);
     assert.equal(result.status, 0, result.stdout);
