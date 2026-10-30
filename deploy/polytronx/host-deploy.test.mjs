@@ -3,10 +3,9 @@
 // here: the deployment only runs with its confirmation token, the preflight comes first,
 // nothing prunes an image or removes a volume, and no secret is printed.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { BASH, DEPLOY_DIR, SAMPLE_ID, makeSandbox, runSnippet, writeRelease } from "./test-harness.mjs";
+import { DEPLOY_DIR } from "./test-harness.mjs";
 
 const dashboard = readFileSync(`${DEPLOY_DIR}/host-dashboard-deploy.sh`, "utf8");
 const executor = readFileSync(`${DEPLOY_DIR}/host-executor-deploy.sh`, "utf8");
@@ -99,5 +98,4 @@ describe("the host deployment scripts", () => {
     assert.doesNotMatch(dashboard, /prepare_prior_docs_release/);
     assert.match(dashboard, /if \[ "\$DEPLOY" != 1 \]; then/);
   });
-
 });

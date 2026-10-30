@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "upstreamRevision": "02a6bbf1c2720699444d91867026e8b0111ed6fc",
-  "baselineCommit": "2d97ad98db3e2dbc74c85f5f2a592f181945a549",
+  "baselineCommit": "7530621ca0bc5d9514214bacc06f4381f2c87457",
   "notice": "Existing divergence manifest, not a security approval. Every file and removed workflow still requires review; update SHA pins only with explicit reviewed changes.",
   "exceptions": [
     {
@@ -17,7 +17,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "status": "M",
-      "sha": "596e0e1d50bac38a8c9950d56b22e49213c47f33"
+      "sha": "e2d91ef17f27ae919de8ef0a7b7b52e026d09475"
     },
     {
       "path": ".github/workflows/compose-smoke.yml",
@@ -55,9 +55,69 @@
       "sha": "8f4b1345a2171fe29f69f98edbea0b76bef273a1"
     },
     {
+      "path": "docs/GETTING_STARTED.md",
+      "status": "M",
+      "sha": "e569767f17e062379f97d1ad996711439e9e0de2"
+    },
+    {
+      "path": "packages/control-plane/src/cloudflare/job-queue-routing.test.ts",
+      "status": "A",
+      "sha": "a380223985ee4424d825b340a40b7d678c2967ae"
+    },
+    {
       "path": "packages/control-plane/src/db/session-index.ts",
       "status": "M",
-      "sha": "9932ee810a0c0cdd486480fb2623fa208d4ff006"
+      "sha": "611d4c3929c3e0fbc0f0b94ef754c7d5950e3697"
+    },
+    {
+      "path": "packages/control-plane/src/node/codex-migration.test.ts",
+      "status": "M",
+      "sha": "bd78b0a09ec664c2dc3d60ff1ec8d962316372fe"
+    },
+    {
+      "path": "packages/control-plane/src/node/config.test.ts",
+      "status": "M",
+      "sha": "1ae083d1c8cb0129e06febba331df097e7594144"
+    },
+    {
+      "path": "packages/control-plane/src/node/crash-recovery.test.ts",
+      "status": "M",
+      "sha": "1d5e899ca9f7700759eb66bb2e74930944be2f2b"
+    },
+    {
+      "path": "packages/control-plane/src/node/crash-recovery.ts",
+      "status": "M",
+      "sha": "e015814ceff07ecbe9ab0951b24a77a5115edce1"
+    },
+    {
+      "path": "packages/control-plane/src/node/env-example.test.ts",
+      "status": "M",
+      "sha": "4adbdc84b182dbae24457b7fd4d637450cfad237"
+    },
+    {
+      "path": "packages/control-plane/src/node/host-alarm-index.test.ts",
+      "status": "M",
+      "sha": "af7a044138cc0df912b892434a17ae8fad7b0480"
+    },
+    {
+      "path": "packages/control-plane/src/node/session-runtime-registry.test.ts",
+      "status": "M",
+      "sha": "1eddaf699364190ab99a9af5c2fb8a865ea3e95d"
+    },
+    {
+      "path": "packages/control-plane/src/node/session-store.test.ts",
+      "status": "M",
+      "sha": "a55a0016e06130bd90b7c3c5dca592c00d2e70f9"
+    },
+    {
+      "path": "packages/control-plane/src/node/sqlite-database.test.ts",
+      "status": "M",
+      "sha": "a81a4c1df2a20dd30eeab4f30507082ec251da2e"
+    },
+    {
+      "path": "packages/control-plane/src/routes/session-create.ts",
+      "status": "M",
+      "sha": "4f3ab04e42863ff37b6020065ee87b35b879661b"
     },
     {
       "path": "packages/control-plane/src/routes/session-index.test.ts",
@@ -68,6 +128,11 @@
       "path": "packages/control-plane/src/routes/session-index.ts",
       "status": "M",
       "sha": "754198cd2bed44268e5b53eb1f66b07aca7c1a27"
+    },
+    {
+      "path": "packages/control-plane/src/routes/session-prompt.ts",
+      "status": "M",
+      "sha": "617022efa048d96aae2b440081ce9e96d778752e"
     },
     {
       "path": "packages/control-plane/src/sandbox/lifecycle/decisions-restore.test.ts",
@@ -115,6 +180,11 @@
       "sha": "55d4a1fc427d05e66ac0d289f431565b96679fc3"
     },
     {
+      "path": "packages/control-plane/src/session/initialize.ts",
+      "status": "M",
+      "sha": "13f8cc515963cb7acf4c4dab9f8ee184a0282a9f"
+    },
+    {
       "path": "packages/control-plane/src/session/message-queue.test.ts",
       "status": "M",
       "sha": "a08022ad0e3fe9673052d5e9bfb1f873dbb89936"
@@ -125,9 +195,124 @@
       "sha": "009ed4b355f7b8b228d3d58e70c4fe322c46b5e4"
     },
     {
+      "path": "packages/control-plane/src/worker-build.test.ts",
+      "status": "M",
+      "sha": "d042cc18924c8d69f5b067ae7ac3c261f99d24e9"
+    },
+    {
+      "path": "packages/control-plane/test/integration/d1-session-index.test.ts",
+      "status": "M",
+      "sha": "1b85b0b746b5034677eae8c7f6be872183e26808"
+    },
+    {
+      "path": "packages/control-plane/test/integration/prompt-enqueue.test.ts",
+      "status": "M",
+      "sha": "c8f9af252b930bc2dede4e3157cd22b2f4d93164"
+    },
+    {
+      "path": "packages/control-plane/test/integration/session-create-idempotency.test.ts",
+      "status": "A",
+      "sha": "88b8b86168e5a7fb41d34ca02df9e9fb4eeff6df"
+    },
+    {
+      "path": "packages/control-plane/vitest.config.ts",
+      "status": "M",
+      "sha": "8da711bf4fbc0c1e3927563843542c195d199349"
+    },
+    {
+      "path": "packages/docs/content/docs/administration/deployment.mdx",
+      "status": "M",
+      "sha": "e71a6a1aa4d064293ba8e4a3681a018ac7be9456"
+    },
+    {
       "path": "packages/docs/content/docs/models/choosing-a-model.mdx",
       "status": "M",
-      "sha": "587b1bdd6798d06bd1ab6a0bdf40166889ff6e56"
+      "sha": "3bd7f6e5e017de508fdc897c6badd83be2517764"
+    },
+    {
+      "path": "packages/github-bot/src/delivery-claims.ts",
+      "status": "A",
+      "sha": "8a4a3c360c5f1526e197687abaa4ba3fd43d0ef3"
+    },
+    {
+      "path": "packages/github-bot/src/index.ts",
+      "status": "M",
+      "sha": "b7ee22507a7122fe3a5e89996617972777acb1b6"
+    },
+    {
+      "path": "packages/github-bot/src/types.ts",
+      "status": "M",
+      "sha": "65b6aa580a3274ff468f3e29add60cfa34cd8245"
+    },
+    {
+      "path": "packages/github-bot/test/model-selection.test.ts",
+      "status": "M",
+      "sha": "5d7b1511764e7bd31021607c8c51fe5880f5ae23"
+    },
+    {
+      "path": "packages/github-bot/test/webhook.test.ts",
+      "status": "M",
+      "sha": "4e474c07a9344f5f05283ffb4a993d6ad69c93b8"
+    },
+    {
+      "path": "packages/linear-bot/src/index.test.ts",
+      "status": "M",
+      "sha": "a2386c9ec826af3ade4fbf9a0b8d0bcb80d66f8b"
+    },
+    {
+      "path": "packages/linear-bot/src/index.ts",
+      "status": "M",
+      "sha": "ea7e559e2f25ca1a3796029efa44c904661eb468"
+    },
+    {
+      "path": "packages/linear-bot/src/kv-store.ts",
+      "status": "M",
+      "sha": "a10ae76483caceb1709c1a6d0593bb4ba650a4b1"
+    },
+    {
+      "path": "packages/linear-bot/src/launch-admission.ts",
+      "status": "M",
+      "sha": "2f5271faf0b1a7b826a406d863427c635623901e"
+    },
+    {
+      "path": "packages/linear-bot/src/test-helpers.ts",
+      "status": "M",
+      "sha": "2092f6ab0f9863f14b9c9e390e44f5b98f004be6"
+    },
+    {
+      "path": "packages/linear-bot/src/types.ts",
+      "status": "M",
+      "sha": "f042d99707bb48871f82e8271ea815a6f78f5c0f"
+    },
+    {
+      "path": "packages/linear-bot/src/webhook-consumer.test.ts",
+      "status": "A",
+      "sha": "0df451c861ff61f79a1234c33e366b409a218d55"
+    },
+    {
+      "path": "packages/linear-bot/src/webhook-consumer.ts",
+      "status": "A",
+      "sha": "75c503ac93895fa24a3f379089b9fd14081b4b7e"
+    },
+    {
+      "path": "packages/linear-bot/src/webhook-handler.harness.test.ts",
+      "status": "M",
+      "sha": "343aaff898b0564a293e312f900bd7bed2881963"
+    },
+    {
+      "path": "packages/linear-bot/src/webhook-handler.test.ts",
+      "status": "M",
+      "sha": "1ce5a8d16fe17d50da297201144a5bd5033edee2"
+    },
+    {
+      "path": "packages/linear-bot/src/webhook-handler.ts",
+      "status": "M",
+      "sha": "b692b97b8452aa3ba17da27b09e3eff236aacdfe"
+    },
+    {
+      "path": "packages/shared/package.json",
+      "status": "M",
+      "sha": "8624bc207fc657912733699f00b30328c0c5db73"
     },
     {
       "path": "packages/shared/src/models.test.ts",
@@ -140,9 +325,99 @@
       "sha": "ad4b938d8457a3323c8651ab87a8a9f33151ad26"
     },
     {
+      "path": "packages/shared/src/webhook-queue.test.ts",
+      "status": "A",
+      "sha": "559d56062867ee847bd5c8c746ea96018883c609"
+    },
+    {
+      "path": "packages/shared/src/webhook-queue.ts",
+      "status": "A",
+      "sha": "8c46ebf3d15111c144760d7707c0fb1e8f10cf9f"
+    },
+    {
+      "path": "packages/slack-bot/src/attachments.test.ts",
+      "status": "M",
+      "sha": "acc50dbc87035545c678400ac2185276861ccc59"
+    },
+    {
+      "path": "packages/slack-bot/src/callbacks.test.ts",
+      "status": "M",
+      "sha": "931aa33548a2f402d8e108f9166f61dfadb26c0f"
+    },
+    {
+      "path": "packages/slack-bot/src/channel-trigger.test.ts",
+      "status": "M",
+      "sha": "243e4079f43b66a808b8a06e8d24a61d6965f1b7"
+    },
+    {
+      "path": "packages/slack-bot/src/channel-trigger.ts",
+      "status": "M",
+      "sha": "b44b11c35c05498058c66437bbbf170f7ca14f12"
+    },
+    {
+      "path": "packages/slack-bot/src/completion/delivery.test.ts",
+      "status": "M",
+      "sha": "2b03ca4e622c4d8a9cba989bbdccd7f10d4140ac"
+    },
+    {
+      "path": "packages/slack-bot/src/completion/media-upload.test.ts",
+      "status": "M",
+      "sha": "335660dcd27634d0cf896e0acbf2804c8e5ddc2e"
+    },
+    {
+      "path": "packages/slack-bot/src/events/consumer.test.ts",
+      "status": "A",
+      "sha": "52b2c3417f8134324783ab71104aa747bf2b7f84"
+    },
+    {
+      "path": "packages/slack-bot/src/events/consumer.ts",
+      "status": "A",
+      "sha": "324ccacf20aed536bf94f485a81d388d0d81b062"
+    },
+    {
+      "path": "packages/slack-bot/src/index.test.ts",
+      "status": "M",
+      "sha": "f475dc8335cbaf755ac5897bb9c5fd3a91e6e149"
+    },
+    {
+      "path": "packages/slack-bot/src/index.ts",
+      "status": "M",
+      "sha": "f7c9a006d91b3062a080c6a5ed2979f229f0c884"
+    },
+    {
+      "path": "packages/slack-bot/src/queue-routing.test.ts",
+      "status": "A",
+      "sha": "f37b27ba0bd423105d61387711aae20822dc72ea"
+    },
+    {
+      "path": "packages/slack-bot/src/routes/events.test.ts",
+      "status": "M",
+      "sha": "ce17234d5968a1a544b796b1746321f0bd2bd916"
+    },
+    {
+      "path": "packages/slack-bot/src/routes/events.ts",
+      "status": "M",
+      "sha": "fe73edb56aa8cd9403a4adeaa25731150e2ce117"
+    },
+    {
+      "path": "packages/slack-bot/src/types.ts",
+      "status": "M",
+      "sha": "818964576ac25ddb454ee54808b98bb9378f2ade"
+    },
+    {
+      "path": "packages/web/src/app/(app)/(sidebar)/automations/new/page.test.tsx",
+      "status": "M",
+      "sha": "c5404c254734ba72de573706f676891a5ba2f31e"
+    },
+    {
       "path": "packages/web/src/app/api/sessions/[id]/route.ts",
       "status": "M",
       "sha": "ffa753b7aab93d0bfc615025cb72049378de6497"
+    },
+    {
+      "path": "packages/web/src/components/automations/automation-form.test.tsx",
+      "status": "M",
+      "sha": "847924cf756456551b42a49603d8feb71c5464c8"
     },
     {
       "path": "packages/web/src/components/delete-session-dialog.tsx",
@@ -158,6 +433,16 @@
       "path": "packages/web/src/components/session-list-item.tsx",
       "status": "M",
       "sha": "f6306292f86bd1e06b18b1d4c8a35e4a0bf276e0"
+    },
+    {
+      "path": "packages/web/src/components/settings/integrations/linear-integration-settings.test.tsx",
+      "status": "M",
+      "sha": "55180f2b06ff27d100249bf4589188a3751b4a03"
+    },
+    {
+      "path": "packages/web/src/components/settings/models-settings.test.tsx",
+      "status": "M",
+      "sha": "336992eb0c80d260dbb52c0fdd3dfd7fe08feeda"
     },
     {
       "path": "packages/web/src/components/ui/icons.tsx",
@@ -185,6 +470,11 @@
       "sha": "708590380994b5871573da71c5ee03202b4ba710"
     },
     {
+      "path": "packages/web/vitest.config.ts",
+      "status": "M",
+      "sha": "4b3099d5bb676e3118270e002d2e246fa32bf742"
+    },
+    {
       "path": "scripts/opencode-model-sync.mjs",
       "status": "A",
       "sha": "12f02f93b681199cd8ce90bdaf98a7a36402663f"
@@ -193,6 +483,61 @@
       "path": "scripts/opencode-model-sync.test.mjs",
       "status": "A",
       "sha": "9caea7a2137b2250c446b83cddd42aad9ddafdbb"
+    },
+    {
+      "path": "terraform/README.md",
+      "status": "M",
+      "sha": "765fcd060052f2e928f3e5a9d2324556e5c5f4eb"
+    },
+    {
+      "path": "terraform/d1/migrations/0091_github_webhook_deliveries.sql",
+      "status": "A",
+      "sha": "801b25c210f280f902094441748531ef1fed4400"
+    },
+    {
+      "path": "terraform/d1/migrations/0092_bot_webhook_deliveries.sql",
+      "status": "A",
+      "sha": "61e5c1ef395d523260b51c60e1b4622d3fb90f92"
+    },
+    {
+      "path": "terraform/d1/migrations/0093_bot_webhook_delivery_retention.sql",
+      "status": "A",
+      "sha": "17367c8574c6f288f35cdfc9370a70d687a9d699"
+    },
+    {
+      "path": "terraform/d1/migrations/0094_linear_session_creation_idempotency.sql",
+      "status": "A",
+      "sha": "63a659090f0dfc6d4abf9ffd8aa74a6370464442"
+    },
+    {
+      "path": "terraform/d1/migrations/0095_linear_session_init_recovery.sql",
+      "status": "A",
+      "sha": "8441de2669824dbcec0069da476c9308348b6c0a"
+    },
+    {
+      "path": "terraform/environments/production/.terraform.lock.hcl",
+      "status": "M",
+      "sha": "cd8b1d3957778148df1cba4012c70b8bc6a570f1"
+    },
+    {
+      "path": "terraform/environments/production/r2.tf",
+      "status": "M",
+      "sha": "a2591a8554a7a719a59d83733f218c0136878cac"
+    },
+    {
+      "path": "terraform/environments/production/workers-github.tf",
+      "status": "M",
+      "sha": "db90befb140df8d832effc4ca0bdcc102d164943"
+    },
+    {
+      "path": "terraform/environments/production/workers-linear.tf",
+      "status": "M",
+      "sha": "d77735e655163147879fa1367fe768e3db430a4a"
+    },
+    {
+      "path": "terraform/environments/production/workers-slack.tf",
+      "status": "M",
+      "sha": "05c0fc99cdb6b785088cf1359dbe8967dae84f85"
     }
   ]
 }
