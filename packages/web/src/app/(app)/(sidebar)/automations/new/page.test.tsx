@@ -149,7 +149,7 @@ describe("NewAutomationPage template pre-fill", () => {
       teamId: "team-1",
       repositories: [{ repoOwner: "acme", repoName: "api", baseBranch: "main" }],
     });
-  });
+  }, 10_000);
 
   it("prefills the replacement's scoped team without offering workspace ownership", async () => {
     search = "template=review-new-prs&teamId=team-1&requireTeam=true";

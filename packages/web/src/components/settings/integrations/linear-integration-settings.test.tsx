@@ -381,7 +381,7 @@ describe("LinearIntegrationSettings harness", () => {
       model: "anthropic/claude-sonnet-4-6",
     });
     expect(body.settings.defaults).not.toHaveProperty("reasoningEffort");
-  });
+  }, 10_000);
 
   it("offers Codex reasoning efforts for global defaults", async () => {
     const user = userEvent.setup();

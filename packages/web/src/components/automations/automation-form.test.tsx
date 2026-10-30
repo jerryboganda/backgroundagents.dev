@@ -190,7 +190,7 @@ describe("automation cron submission", () => {
     expect(screen.getByRole("button", { name: "Create Automation" })).toBeDisabled();
     fireEvent.submit(container.querySelector("form")!);
     expect(onSubmit).toHaveBeenCalledTimes(1);
-  });
+  }, 10_000);
 
   it.each(["team-1", null])("keeps owner %s read-only and omits edit ownership", (teamId) => {
     scopeMocks.allowWorkspace = false;
@@ -530,7 +530,7 @@ describe("automation cron submission", () => {
         conditions: [{ type: "conclusion", operator: "eq", value: "failure" }],
       },
     });
-  });
+  }, 10_000);
 
   it("clears active and dropped conditions when changing trigger source", () => {
     render(

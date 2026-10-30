@@ -15,7 +15,7 @@ relatedCode:
   - terraform/environments/production/variables.tf
   - terraform/environments/production/workers-control-plane.tf
   - terraform/environments/aws-production/main.tf
-  - .github/workflows/terraform.yml
+  - terraform/README.md
   - packages/control-plane/src/authorization/teams-enforcement.ts
   - packages/control-plane/src/authorization/session-admission.ts
   - packages/control-plane/src/routes/teams.ts
@@ -146,7 +146,7 @@ Workspace fallback does not bypass `requireTeamOnCreate` or other creation check
 
 ## Keeping a deployment current
 
-On the Cloudflare/Vercel path, updating means pulling the latest code, rebuilding the shared package if it changed, and applying Terraform again; it only changes what differs. If the web app is on Vercel it is redeployed separately; on Cloudflare, Terraform rebuilds it. The self-hosting guide also documents an optional GitHub Actions workflow for applying deployments from CI. For the AWS control plane, follow the [AWS bring-up guide](https://github.com/ColeMurray/background-agents/blob/main/docs/AWS_BRING_UP.md).
+On the Cloudflare/Vercel path, updating means pulling the latest code, rebuilding the shared package if it changed, and reviewing and applying a Terraform plan; it only changes what differs. If the web app is on Vercel it is redeployed separately; on Cloudflare, Terraform rebuilds it. Production Terraform applies are manual; see the [Terraform deployment procedure](https://github.com/ColeMurray/background-agents/blob/main/terraform/README.md). For the AWS control plane, follow the [AWS bring-up guide](https://github.com/ColeMurray/background-agents/blob/main/docs/AWS_BRING_UP.md).
 
 ## Where the runbooks are
 

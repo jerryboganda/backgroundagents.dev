@@ -102,7 +102,7 @@ describe("openNodeSqlDatabase", () => {
     const path = join(dataDir, "global.db");
     const db = openNodeSqlDatabase(path);
     try {
-      expect(statSync(path).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
       expect(await db.prepare("PRAGMA journal_mode").first()).toEqual({ journal_mode: "wal" });
       expect(await db.prepare("PRAGMA busy_timeout").first()).toEqual({ timeout: BUSY_TIMEOUT_MS });
       expect(await db.prepare("PRAGMA foreign_keys").first()).toEqual({ foreign_keys: 1 });

@@ -101,7 +101,7 @@ function readComposeRequiredVariables(): string[] {
 
 /** The "## Quick start" section of the container document, and no other section. */
 function readQuickStart(): string {
-  const doc = readFileSync(CONTAINER_DOC_PATH, "utf8");
+  const doc = readFileSync(CONTAINER_DOC_PATH, "utf8").replace(/\r\n/g, "\n");
   const start = doc.indexOf("\n## Quick start\n");
   if (start === -1) throw new Error("CONTROL_PLANE_CONTAINER.md has no Quick start section");
   const end = doc.indexOf("\n## ", start + 1);
