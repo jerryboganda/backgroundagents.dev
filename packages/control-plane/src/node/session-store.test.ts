@@ -65,13 +65,14 @@ describe("openSessionStore", () => {
 
   it("keeps the sessions directory and every database file private to the host user", () => {
     const store = open("session-1");
-    store.close();
+    const mode = (path: string): number => statSync(path).mode & 0o777;
     if (process.platform !== "win32") {
-      const mode = (path: string): number => statSync(path).mode & 0o777;
       expect(mode(join(dataDir, "sessions"))).toBe(0o700);
       expect(mode(store.path)).toBe(0o600);
       expect(mode(`${store.path}-wal`)).toBe(0o600);
-
+    }
+    store.close();
+    if (process.platform !== "win32") {
       // A directory or file that already exists with wider modes is narrowed.
       chmodSync(join(dataDir, "sessions"), 0o755);
       chmodSync(store.path, 0o644);
