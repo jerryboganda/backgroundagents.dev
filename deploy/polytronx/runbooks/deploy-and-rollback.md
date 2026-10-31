@@ -94,6 +94,13 @@ The backup stops only the services that are running, and restarts those same con
 deploy stops before any release change, and the failure is written to `state/deploy-log.txt`. A
 failed `up` or a failed smoke is logged the same way.
 
+Before a failed `up` or smoke is reported, `deploy.sh` saves Compose service state/health and the
+last 100 log lines per container from app, web and (when enabled) docs to a unique
+`state/deploy-failure-*.log` file. The state directory is mode 0700 and each diagnostics file is
+mode 0600. Inspect these files as root before retrying; service logs can contain secrets, so their
+contents are never copied into `deploy-log.txt` or printed to the terminal. The diagnostics are
+collected before `--rollback-on-failure` can replace failed containers.
+
 Deploy, rollback and the scheduled backup share one lock, `state/project.lock`. A second run exits
 at once with "holds ... project.lock" and changes nothing. If that message appears with no other run
 in progress, check for a stale process before removing anything.
