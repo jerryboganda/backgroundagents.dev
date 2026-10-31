@@ -94,6 +94,28 @@ describe("the host deployment scripts", () => {
     assert.doesNotMatch(dashboard, /prepare_prior_docs_release/);
   });
 
+  it("packages an executable LF control-plane entrypoint", () => {
+    const entrypoint = readFileSync(
+      new URL("../../packages/control-plane/docker/entrypoint.sh", import.meta.url)
+    );
+    const attributes = readFileSync(new URL("../../.gitattributes", import.meta.url), "utf8");
+    const ignored = readFileSync(new URL("../../.dockerignore", import.meta.url), "utf8");
+    const dockerfile = readFileSync(
+      new URL("../../packages/control-plane/Dockerfile", import.meta.url),
+      "utf8"
+    );
+
+    assert.equal(entrypoint.subarray(0, 10).toString(), "#!/bin/sh\n");
+    assert.ok(!entrypoint.includes(13), "CRLF breaks the Linux shebang");
+    assert.match(attributes, /^packages\/control-plane\/docker\/entrypoint\.sh text eol=lf\r?$/m);
+    assert.match(ignored, /^!packages\/control-plane\/\r?$/m);
+    assert.match(
+      dockerfile,
+      /^COPY --chmod=755 packages\/control-plane\/docker\/entrypoint\.sh \/app\/entrypoint\.sh\r?$/m
+    );
+    assert.match(dockerfile, /^ENTRYPOINT \["\/app\/entrypoint\.sh"\]\r?$/m);
+  });
+
   it("does not mutate last-good on preflight-only or preflight failure", () => {
     assert.doesNotMatch(dashboard, /set_release_value DOCS_IMAGE [^\n]*\$prior/);
     assert.doesNotMatch(dashboard, /prepare_prior_docs_release/);
