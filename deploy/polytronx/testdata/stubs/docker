@@ -39,6 +39,8 @@ case "$1" in
     case "$sub" in
       up) exit "${STUB_UP_EXIT:-0}" ;;
       stop) exit "${STUB_STOP_EXIT:-0}" ;;
+      ps) printf '%s' "${STUB_COMPOSE_PS_OUTPUT:-}"; exit "${STUB_COMPOSE_PS_EXIT:-0}" ;;
+      logs) printf '%s' "${STUB_COMPOSE_LOGS_OUTPUT:-}"; exit "${STUB_COMPOSE_LOGS_EXIT:-0}" ;;
       create)
         # Compose reads each service's env_file while it creates the services, so a missing one
         # stops create. STUB_COMPOSE_ENV_CHECK turns that on; the names are the production env files.

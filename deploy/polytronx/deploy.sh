@@ -68,6 +68,26 @@ log_deploy() { # $1 message
     >>"$STATE_DIR/deploy-log.txt"
 }
 
+# Capture the failed release while its containers still exist, before a host-level rollback.
+# Service logs can contain credentials; keep them out of the deploy log and terminal.
+capture_failure_diagnostics() { # $1 failed gate
+  local file services=(app web)
+  [ -z "$(env_value DOCS_IMAGE "$RELEASE_FILE")" ] || services+=(docs)
+  if ! file="$(umask 077; mktemp "$STATE_DIR/deploy-failure-XXXXXXXX.log")"; then
+    warn "could not create private deploy failure diagnostics"
+    return 0
+  fi
+  {
+    printf 'timestamp=%s revision=%s gate=%s\n' "$(date -u +%FT%TZ)" "$OPEN_INSPECT_REVISION" "$1"
+    printf '\n=== Compose service state and health ===\n'
+    live_compose ps --all --format json || printf 'Compose state unavailable\n'
+    printf '\n=== Recent service logs (last 100 lines per container) ===\n'
+    live_compose logs --no-color --timestamps --tail 100 "${services[@]}" ||
+      printf 'Compose service logs unavailable\n'
+  } >"$file" 2>&1 || warn "could not finish private deploy failure diagnostics"
+  info "deploy failure diagnostics saved to $file (root-only)"
+}
+
 # The way back after a failed deploy. A rollback target exists only once a release has passed smoke.
 recovery_hint() {
   if [ -f "$STATE_DIR/last-good.env" ]; then
@@ -113,6 +133,7 @@ live_compose config --quiet
 cp "$RELEASE_FILE" "$STATE_DIR/attempted.env"
 info "bringing the project up (no pulls; images are verified above)"
 if ! live_compose up -d --wait --wait-timeout 420 --pull never; then
+  capture_failure_diagnostics "compose up"
   log_deploy "deploy FAILED up: services did not all become healthy on the new release"
   die "up failed on the new release, so services may be partly updated. $(recovery_hint) Run smoke.sh to see which service is unhealthy."
 fi
@@ -127,6 +148,7 @@ if "$DEPLOY_DIR/smoke.sh" --release "$RELEASE_FILE"; then
     >>"$STATE_DIR/deploy-log.txt"
   info "deploy complete; last-good release updated"
 else
+  capture_failure_diagnostics "smoke"
   log_deploy "deploy FAILED smoke: the new release did not pass"
   warn "smoke failed on the new release. $(recovery_hint)"
   exit 1

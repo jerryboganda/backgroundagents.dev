@@ -12,6 +12,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { describe, it } from "node:test";
@@ -73,6 +74,17 @@ function readDeployLog(sb) {
   return existsSync(file) ? readFileSync(file, "utf8") : "";
 }
 
+function readFailureDiagnostics(sb) {
+  const files = readdirSync(sb.state).filter((name) => /^deploy-failure-.*\.log$/.test(name));
+  assert.equal(files.length, 1, "one private diagnostics file per failed health gate");
+  const file = `${sb.state}/${files[0]}`;
+  if (process.platform === "linux") {
+    assert.equal(statSync(sb.state).mode & 0o777, 0o700);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+  }
+  return readFileSync(file, "utf8");
+}
+
 describe("deploy.sh failure paths", () => {
   it("supports historical backup and first-docs rollback without reusing the candidate docs image", () => {
     const lib = readFileSync(`${DEPLOY_DIR}/lib.sh`, "utf8");
@@ -87,12 +99,32 @@ describe("deploy.sh failure paths", () => {
   });
   it("a failed up on the first deploy is logged, and offers first-deployment recovery rather than a rollback command", () => {
     const fixture = deployFixture();
-    const result = runScript(fixture.sb, "deploy.sh", deployArgs(fixture), { STUB_UP_EXIT: "1" });
+    const result = runScript(fixture.sb, "deploy.sh", deployArgs(fixture), {
+      STUB_UP_EXIT: "1",
+      STUB_COMPOSE_PS_OUTPUT: '{"Service":"app","State":"exited","Health":"unhealthy"}\n',
+      STUB_COMPOSE_LOGS_OUTPUT: 'app | private-log-marker\ndocs | startup failed\n',
+    });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /up failed on the new release/);
     assert.match(result.stderr, /No earlier release has passed smoke/);
     assert.doesNotMatch(result.stdout + result.stderr, /rollback\.sh --to/);
     assert.match(readDeployLog(fixture.sb), /deploy FAILED up/);
+    assert.doesNotMatch(readDeployLog(fixture.sb) + result.stdout + result.stderr, /private-log-marker/);
+    const diagnostics = readFailureDiagnostics(fixture.sb);
+    assert.match(diagnostics, /gate=compose up/);
+    assert.match(diagnostics, /"State":"exited","Health":"unhealthy"/);
+    assert.match(diagnostics, /private-log-marker/);
+    const calls = composeCalls(fixture.sb);
+    const up = calls.findIndex(isUp);
+    const ps = calls.findIndex((line) => / ps --all --format json$/.test(line));
+    const logs = calls.findIndex((line) => / logs --no-color --timestamps --tail 100 app web docs$/.test(line));
+    assert.ok(up >= 0 && ps > up && logs > ps, "diagnostics must precede failure return and rollback");
+    const hostDeploy = readFileSync(`${DEPLOY_DIR}/host-dashboard-deploy.sh`, "utf8");
+    assert.ok(
+      hostDeploy.indexOf('if bash "$SRC/deploy/polytronx/deploy.sh" --release') <
+        hostDeploy.indexOf('warn "rolling back to the last release that passed smoke"'),
+      "the host may roll back only after deploy.sh has captured failure diagnostics"
+    );
     assert.equal(
       stubCalls(fixture.sb).some(isSmoke),
       false,
@@ -109,6 +141,7 @@ describe("deploy.sh failure paths", () => {
     assert.match(result.stderr, /No earlier release has passed smoke/);
     assert.doesNotMatch(result.stderr, /rollback\.sh --to/);
     assert.match(readDeployLog(fixture.sb), /deploy FAILED smoke/);
+    assert.match(readFailureDiagnostics(fixture.sb), /gate=smoke/);
     assert.equal(existsSync(`${fixture.sb.state}/last-good.env`), false);
   });
 
@@ -146,6 +179,8 @@ describe("deploy.sh failure paths", () => {
     assert.equal(existsSync(`${fixture.sb.state}/last-good.env`), true);
     assert.match(readDeployLog(fixture.sb), /deploy ok revision=/);
     assert.match(result.stdout, /last-good release updated/);
+    assert.equal(readdirSync(fixture.sb.state).some((name) => name.startsWith("deploy-failure-")), false);
+    assert.equal(composeCalls(fixture.sb).some((line) => / (ps|logs) /.test(line)), false);
   });
 
   it("a preflight refusal after the image archives were loaded does not claim nothing changed", () => {
